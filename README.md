@@ -42,6 +42,12 @@ npm run start
 - 数据保存在此浏览器的 IndexedDB 中；清除浏览器站点数据会一并删除。
 - 请定期使用“导出 JSON”备份。导入会先显示预检结果，确认后完整替换当前本地资料。
 
+## macOS 桌面小组件
+
+使用 [desktop/PersonEventAtlas.xcodeproj](desktop/PersonEventAtlas.xcodeproj) 在 Xcode 15+ 中运行 `PersonEventAtlas` target。首次启动会将已有 WebView IndexedDB 档案自动迁移到 App Group 共享资料库；小组件显示最近更新的事件，小型显示一条、中型显示三条。点击条目会通过 `person-event-atlas://event/<id>` 打开主应用对应详情。
+
+首次构建需要本机可用的 Node.js 与 npm，Xcode 构建阶段会打包前端运行资源。选择开发团队后，运行主应用，再从 macOS 的小组件面板添加“最近更新”。
+
 ## 开发与验证
 
 ```bash
