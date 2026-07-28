@@ -77,6 +77,16 @@
 .shortcut-panel form > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .shortcut-panel button { border: 1px solid #cfe0cf; border-radius: 7px; padding: 8px 12px; background: white; color: #406451; }
 .shortcut-panel [data-save] { background: #185c45; border-color: #185c45; color: white; }
+.webdav-panel { width:min(92vw,500px); border:0; border-radius:14px; padding:0; background:#fffefa; color:#17211d; box-shadow:0 20px 60px #0004; }
+.webdav-panel::backdrop { background:#1e302580; }
+.webdav-panel form { display:grid; gap:14px; padding:24px; }
+.webdav-panel h2 { margin:0; font-size:23px; }
+.webdav-panel p:not(.eyebrow),.webdav-panel .sync-status { margin:-5px 0 4px; color:#718077; font-size:12px; line-height:1.5; }
+.webdav-panel label { display:grid; gap:6px; color:#4a5b50; font-size:12px; font-weight:700; }
+.webdav-panel input { width:100%; padding:9px 10px; border:1px solid #dbe4da; border-radius:7px; background:#f8faf6; }
+.webdav-panel form > div { display:flex; justify-content:flex-end; gap:8px; margin-top:4px; }
+.webdav-panel button { border:1px solid #cfe0cf; border-radius:7px; padding:8px 12px; background:white; color:#406451; }
+.webdav-panel [data-sync] { background:#185c45; border-color:#185c45; color:white; }
 
 .participants .link-person-button {
   border: 1px dashed #b9cbbb;
