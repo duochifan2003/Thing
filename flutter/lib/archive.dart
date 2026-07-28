@@ -2,7 +2,7 @@ import 'dart:convert';
 
 enum Precision { year, month, day, range }
 
-enum Role { subject, participant, witness, mentioned }
+enum Role { organizer, participant }
 
 enum EntityType { person, event }
 
@@ -19,10 +19,8 @@ extension PrecisionLabel on Precision {
 
 extension RoleLabel on Role {
   String get label => switch (this) {
-    Role.subject => '当事人',
+    Role.organizer => '组织者',
     Role.participant => '参与者',
-    Role.witness => '见证人',
-    Role.mentioned => '提及者',
   };
 }
 
@@ -111,10 +109,9 @@ class PersonLink {
 }
 
 Role _roleFromJson(String value) => switch (value) {
-  '当事人' || 'subject' => Role.subject,
-  '参与者' || 'participant' => Role.participant,
-  '见证人' || 'witness' => Role.witness,
-  '提及者' || 'mentioned' => Role.mentioned,
+  '组织者' || 'organizer' || '当事人' || 'subject' => Role.organizer,
+  '参与者' || 'participant' || '见证人' || 'witness' || '提及者' || 'mentioned' =>
+    Role.participant,
   _ => throw FormatException('不支持的人物角色：$value'),
 };
 
@@ -353,7 +350,7 @@ final seedArchive = Archive(
       description: '围绕老店、迁徙与空间记忆进行的步行访谈。',
       tags: ['访谈', '城市记忆'],
       sources: ['现场笔记'],
-      people: [PersonLink(personId: 'p-lin', role: Role.subject)],
+      people: [PersonLink(personId: 'p-lin', role: Role.organizer)],
       createdAt: DateTime(2025, 3, 18, 10),
       updatedAt: DateTime(2025, 3, 18, 10),
     ),
@@ -369,7 +366,7 @@ final seedArchive = Archive(
       sources: ['项目说明'],
       people: [
         PersonLink(personId: 'p-lin', role: Role.participant),
-        PersonLink(personId: 'p-zhou', role: Role.subject),
+        PersonLink(personId: 'p-zhou', role: Role.organizer),
       ],
       createdAt: DateTime(2025, 4, 1, 8),
       updatedAt: DateTime(2025, 4, 1, 8),

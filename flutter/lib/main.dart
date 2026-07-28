@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'archive.dart';
 import 'archive_repository.dart';
@@ -19,7 +22,98 @@ abstract final class AtlasPalette {
   static const accent = Color(0xffdd704c);
 }
 
-void main() => runApp(const PersonEventAtlasApp());
+class _EditorDialog extends StatelessWidget {
+  const _EditorDialog({
+    required this.title,
+    required this.content,
+    required this.actions,
+    required this.contentWidth,
+  });
+
+  final Widget title;
+  final Widget content;
+  final List<Widget> actions;
+  final double contentWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final dialogHeight = MediaQuery.sizeOf(context).height - 96;
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 48),
+      clipBehavior: Clip.antiAlias,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SizedBox(
+          width: contentWidth + 48,
+          height: dialogHeight,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                child: DefaultTextStyle.merge(
+                  style: Theme.of(context).textTheme.titleLarge,
+                  child: title,
+                ),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+                  children: [content],
+                ),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: OverflowBar(
+                  alignment: MainAxisAlignment.end,
+                  spacing: 8,
+                  children: actions,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const _widgetChannel = MethodChannel('local.munch.eventatlas/widget');
+
+Future<void> _updateWidget(Archive archive) async {
+  if (!Platform.isMacOS) return;
+  final events = [...archive.events]
+    ..sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
+  try {
+    await _widgetChannel.invokeMethod<void>('update', {
+      'events': events
+          .take(3)
+          .map(
+            (event) => {
+              'id': event.id,
+              'title': event.title,
+              'precision': event.precision.name,
+              'start': event.start,
+              'end': event.end,
+              'place': event.place,
+            },
+          )
+          .toList(),
+    });
+  } on PlatformException {
+    // Running outside the macOS app has no WidgetKit channel.
+  } on MissingPluginException {
+    // Running outside the macOS app has no WidgetKit channel.
+  }
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const PersonEventAtlasApp());
+}
 
 class PersonEventAtlasApp extends StatelessWidget {
   const PersonEventAtlasApp({super.key, this.repository});
@@ -31,6 +125,13 @@ class PersonEventAtlasApp extends StatelessWidget {
     return MaterialApp(
       title: '事件录',
       debugShowCheckedModeBanner: false,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+      locale: const Locale('zh', 'CN'),
       theme: ThemeData(
         brightness: Brightness.light,
         useMaterial3: true,
@@ -196,6 +297,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   Future<void> _reload() async {
     try {
       final archive = await _repository.load();
+      unawaited(_updateWidget(archive));
       if (mounted)
         setState(() {
           _archive = archive;
@@ -798,6 +900,9 @@ class FilterBar extends StatelessWidget {
     child: DropdownButton<T>(
       value: value,
       hint: Text(label),
+      borderRadius: const BorderRadius.all(Radius.circular(12)),
+      dropdownColor: AtlasPalette.card,
+      elevation: 6,
       items: items,
       onChanged: (next) {
         if (next != null || T.toString().contains('null')) onChanged(next as T);
@@ -843,7 +948,7 @@ class _DateRangeDialogState extends State<DateRangeDialog> {
             hintText: '2025-01',
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 20),
         TextField(
           controller: _to,
           decoration: const InputDecoration(
@@ -901,6 +1006,7 @@ class TimelineList extends StatelessWidget {
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (_, index) {
         final event = events[index];
+        final links = _orderedPeople(event.people);
         return IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -912,7 +1018,9 @@ class TimelineList extends StatelessWidget {
                   child: Text(
                     event.dateLabel,
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      height: 1.45,
                       color: AtlasPalette.muted,
                     ),
                   ),
@@ -960,12 +1068,18 @@ class TimelineList extends StatelessWidget {
                               children: [
                                 Text(
                                   event.title,
-                                  style: Theme.of(context).textTheme.titleLarge,
+                                  style: const TextStyle(
+                                    fontSize: 21,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.1,
+                                  ),
                                 ),
                                 if (event.place.isNotEmpty)
                                   Text(
                                     event.place,
                                     style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
                                       color: AtlasPalette.muted,
                                     ),
                                   ),
@@ -976,6 +1090,10 @@ class TimelineList extends StatelessWidget {
                                       event.description,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        height: 1.45,
+                                      ),
                                     ),
                                   ),
                                 const SizedBox(height: 10),
@@ -984,12 +1102,39 @@ class TimelineList extends StatelessWidget {
                                   runSpacing: 6,
                                   children: [
                                     ...event.tags.map(
-                                      (tag) => Chip(label: Text('#$tag')),
-                                    ),
-                                    ...event.people.map(
-                                      (link) => Chip(
+                                      (tag) => Chip(
                                         label: Text(
-                                          '${names[link.personId] ?? '未知人物'} · ${link.role.label}',
+                                          '#$tag',
+                                          style: const TextStyle(fontSize: 11),
+                                        ),
+                                      ),
+                                    ),
+                                    ...links.map(
+                                      (link) => Chip(
+                                        backgroundColor: const Color(
+                                          0xffffe9e1,
+                                        ),
+                                        label: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(
+                                              Icons.person_outline,
+                                              size: 15,
+                                              color: AtlasPalette.accent,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Flexible(
+                                              child: Text(
+                                                '${names[link.personId] ?? '未知人物'} · ${link.role.label}',
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  color: AtlasPalette.accent,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -1012,6 +1157,13 @@ class TimelineList extends StatelessWidget {
     );
   }
 }
+
+List<PersonLink> _orderedPeople(Iterable<PersonLink> people) =>
+    [...people]..sort(
+      (left, right) => (left.role == Role.organizer ? 0 : 1).compareTo(
+        right.role == Role.organizer ? 0 : 1,
+      ),
+    );
 
 class PeopleList extends StatelessWidget {
   const PeopleList({
@@ -1164,7 +1316,7 @@ class ArchiveDetail extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             Text('关联人物', style: Theme.of(context).textTheme.titleMedium),
-            ...event!.people.map(
+            ..._orderedPeople(event!.people).map(
               (link) => ListTile(
                 contentPadding: EdgeInsets.zero,
                 onTap: () => onPerson(link.personId),
@@ -1250,7 +1402,7 @@ class EmptyState extends StatelessWidget {
             size: 44,
             color: Theme.of(context).colorScheme.primary,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 28),
           Text(title, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 6),
           Text(text, textAlign: TextAlign.center),
@@ -1310,39 +1462,39 @@ class _PersonEditorState extends State<PersonEditor> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => _EditorDialog(
     title: Text(widget.initial == null ? '新增人物' : '编辑人物'),
-    content: SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _name,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: '姓名 *'),
-          ),
-          TextField(
-            controller: _bio,
-            decoration: const InputDecoration(labelText: '简介'),
-          ),
-          TextField(
-            controller: _tags,
-            decoration: const InputDecoration(
-              labelText: '标签',
-              hintText: '建筑，访谈',
-            ),
-          ),
-          TextField(
-            controller: _notes,
-            maxLines: 2,
-            decoration: const InputDecoration(labelText: '备注'),
-          ),
-          TextField(
-            controller: _sources,
-            decoration: const InputDecoration(labelText: '来源'),
-          ),
-        ],
-      ),
+    contentWidth: 400,
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _name,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: '姓名 *'),
+        ),
+        const SizedBox(height: 28),
+        TextField(
+          controller: _bio,
+          decoration: const InputDecoration(labelText: '简介'),
+        ),
+        const SizedBox(height: 28),
+        TextField(
+          controller: _tags,
+          decoration: const InputDecoration(labelText: '标签', hintText: '建筑，访谈'),
+        ),
+        const SizedBox(height: 28),
+        TextField(
+          controller: _notes,
+          maxLines: 2,
+          decoration: const InputDecoration(labelText: '备注'),
+        ),
+        const SizedBox(height: 28),
+        TextField(
+          controller: _sources,
+          decoration: const InputDecoration(labelText: '来源'),
+        ),
+      ],
     ),
     actions: [
       TextButton(
@@ -1411,83 +1563,124 @@ class _EventEditorState extends State<EventEditor> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => _EditorDialog(
     title: Text(widget.initial == null ? '新增事件' : '编辑事件'),
+    contentWidth: 520,
     content: SizedBox(
       width: 520,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _title,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: '事件标题 *'),
-            ),
-            DropdownButtonFormField<Precision>(
-              value: _precision,
-              decoration: const InputDecoration(labelText: '时间精度'),
-              items: Precision.values
-                  .map(
-                    (value) => DropdownMenuItem(
-                      value: value,
-                      child: Text(value.label),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) => setState(() => _precision = value!),
-            ),
-            TextField(
-              controller: _start,
-              decoration: InputDecoration(
-                labelText: _precision == Precision.range ? '开始时间 *' : '时间 *',
-                hintText: _precision == Precision.year
-                    ? '2025'
-                    : _precision == Precision.month
-                    ? '2025-03'
-                    : '2025-03-18',
-              ),
-            ),
-            if (_precision == Precision.range)
-              TextField(
-                controller: _end,
-                decoration: const InputDecoration(
-                  labelText: '结束时间',
-                  hintText: '2025-05-20',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _title,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: '事件标题 *'),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              SizedBox(
+                width: 120,
+                child: DropdownButtonFormField<Precision>(
+                  value: _precision,
+                  isDense: true,
+                  decoration: const InputDecoration(labelText: '时间精度'),
+                  borderRadius: const BorderRadius.all(Radius.circular(12)),
+                  dropdownColor: AtlasPalette.card,
+                  elevation: 6,
+                  items: Precision.values
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text(value.label, style: const TextStyle(fontSize: 13)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) => setState(() => _precision = value!),
                 ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _start,
+                  readOnly: true,
+                  onTap: () => _pickDate(_start),
+                  decoration: InputDecoration(
+                    labelText: _precision == Precision.range ? '开始时间 *' : '时间 *',
+                    hintText: '点击选择',
+                    suffixIcon: const Icon(Icons.calendar_today, size: 18),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_precision == Precision.range) ...[
             TextField(
-              controller: _place,
-              decoration: const InputDecoration(labelText: '地点'),
+              controller: _end,
+              readOnly: true,
+              onTap: () => _pickDate(_end),
+              decoration: const InputDecoration(
+                labelText: '结束时间',
+                hintText: '点击选择',
+                suffixIcon: Icon(Icons.calendar_today, size: 18),
+              ),
             ),
-            TextField(
-              controller: _description,
-              maxLines: 2,
-              decoration: const InputDecoration(labelText: '描述'),
+            const SizedBox(height: 8),
+          ],
+          TextField(
+            controller: _place,
+            decoration: const InputDecoration(labelText: '地点'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _description,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: '描述',
+              hintText: '发生了什么',
             ),
-            TextField(
-              controller: _tags,
-              decoration: const InputDecoration(labelText: '标签'),
-            ),
-            TextField(
-              controller: _sources,
-              decoration: const InputDecoration(labelText: '来源'),
-            ),
-            const SizedBox(height: 16),
-            Row(
+          ),
+          const Padding(padding: EdgeInsets.only(top: 16), child: Divider()),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Text('关联人物 *'),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: _addLink,
+                icon: const Icon(Icons.add),
+                label: const Text('添加'),
+              ),
+            ],
+          ),
+          ...List.generate(_links.length, _linkEditor),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: const Text('更多', style: TextStyle(fontSize: 13)),
+              collapsedShape: const Border(),
+              shape: const Border(),
+              childrenPadding: const EdgeInsets.only(bottom: 8),
               children: [
-                const Text('关联人物 *'),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: _addLink,
-                  icon: const Icon(Icons.add),
-                  label: const Text('添加'),
+                TextField(
+                  controller: _tags,
+                  decoration: const InputDecoration(
+                    labelText: '标签',
+                    hintText: '用逗号分隔',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _sources,
+                  decoration: const InputDecoration(labelText: '来源'),
                 ),
               ],
             ),
-            ...List.generate(_links.length, _linkEditor),
-          ],
-        ),
+          ),
+        ],
       ),
     ),
     actions: [
@@ -1507,6 +1700,9 @@ class _EventEditorState extends State<EventEditor> {
           Expanded(
             child: DropdownButtonFormField<String>(
               value: link.personId,
+              borderRadius: const BorderRadius.all(Radius.circular(12)),
+              dropdownColor: AtlasPalette.card,
+              elevation: 6,
               items: widget.people
                   .map(
                     (person) => DropdownMenuItem(
@@ -1527,6 +1723,9 @@ class _EventEditorState extends State<EventEditor> {
           Expanded(
             child: DropdownButtonFormField<Role>(
               value: link.role,
+              borderRadius: const BorderRadius.all(Radius.circular(12)),
+              dropdownColor: AtlasPalette.card,
+              elevation: 6,
               items: Role.values
                   .map(
                     (role) =>
@@ -1565,11 +1764,51 @@ class _EventEditorState extends State<EventEditor> {
       );
   }
 
+  Future<void> _pickDate(TextEditingController controller) async {
+    final now = DateTime.now();
+    DateTime? initial;
+    if (controller.text.isNotEmpty) {
+      final parts = controller.text.split('-');
+      initial = DateTime(
+        int.tryParse(parts[0]) ?? now.year,
+        parts.length > 1 ? int.tryParse(parts[1]) ?? 1 : 1,
+        parts.length > 2 ? int.tryParse(parts[2]) ?? 1 : 1,
+      );
+    }
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial ?? now,
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100),
+      initialDatePickerMode: _precision == Precision.year
+          ? DatePickerMode.year
+          : DatePickerMode.day,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(size: const Size(340, 600)),
+        child: child!,
+      ),
+    );
+    if (picked == null) return;
+    final formatted = switch (_precision) {
+      Precision.year => '${picked.year}',
+      Precision.month =>
+        '${picked.year}-${picked.month.toString().padLeft(2, '0')}',
+      Precision.day || Precision.range =>
+        '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}',
+    };
+    setState(() => controller.text = formatted);
+  }
+
   void _save() {
     final title = _title.text.trim();
     final start = _start.text.trim();
     final end = _precision == Precision.range ? _end.text.trim() : null;
-    if (title.isEmpty || start.isEmpty || _links.isEmpty) return;
+    if (title.isEmpty || start.isEmpty || _links.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请填写标题、时间，并关联至少一位人物。')),
+      );
+      return;
+    }
     if (_precision == Precision.range &&
         end != null &&
         end.isNotEmpty &&

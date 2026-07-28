@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -40,8 +41,13 @@ class ArchiveRepository {
           (await getApplicationSupportDirectory()).path,
           'person-event-atlas.sqlite',
         );
+    if (databaseFile != ':memory:') {
+      await Directory(path.dirname(databaseFile)).create(recursive: true);
+    }
     final database = sqlite3.open(databaseFile);
     database.execute('PRAGMA foreign_keys = ON');
+    database.execute('PRAGMA journal_mode = WAL');
+    database.execute('PRAGMA busy_timeout = 1000');
     database.execute('''
       CREATE TABLE IF NOT EXISTS people (
         id TEXT PRIMARY KEY,
@@ -185,7 +191,7 @@ class ArchiveRepository {
 
   Future<bool> deletePerson(String id) => _serialize(() async {
     final database = await _open();
-    return _transaction(database, () {
+    final deleted = _transaction(database, () {
       if (database.select(
         'SELECT event_id FROM event_people WHERE person_id = ? LIMIT 1',
         [id],
@@ -194,6 +200,7 @@ class ArchiveRepository {
       database.execute('DELETE FROM people WHERE id = ?', [id]);
       return true;
     });
+    return deleted;
   });
 
   Future<void> deleteEvent(String id) => _serialize(() async {
@@ -319,7 +326,7 @@ class ArchiveRepository {
         .map(
           (link) => PersonLink(
             personId: link['person_id'] as String,
-            role: Role.values.byName(link['role'] as String),
+            role: _roleFromName(link['role'] as String),
           ),
         )
         .toList(),
@@ -429,5 +436,11 @@ class ArchiveRepository {
 
 List<String> _strings(String source) =>
     (jsonDecode(source) as List).cast<String>();
+
+Role _roleFromName(String value) => switch (value) {
+  'organizer' || 'subject' => Role.organizer,
+  'participant' || 'witness' || 'mentioned' => Role.participant,
+  _ => throw FormatException('不支持的人物角色：$value'),
+};
 
 String _revisionId() => 'r-${DateTime.now().microsecondsSinceEpoch}';

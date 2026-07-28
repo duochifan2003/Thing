@@ -17,6 +17,6 @@ void main() {
       {"version":1,"people":[{"id":"p","name":"林岚","createdAt":"2025-01-01T00:00:00.000","updatedAt":"2025-01-01T00:00:00.000"}],"events":[{"id":"e","title":"访谈","precision":"day","start":"2025-01-01","createdAt":"2025-01-01T00:00:00.000","updatedAt":"2025-01-01T00:00:00.000","people":[{"personId":"p","role":"当事人"}]}],"revisions":[]}
     ''');
 
-    expect(decoded.events.single.people.single.role, Role.subject);
+    expect(decoded.events.single.people.single.role, Role.organizer);
   });
 }
