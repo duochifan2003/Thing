@@ -195,8 +195,9 @@ class ArchiveRepository {
       if (database.select(
         'SELECT event_id FROM event_people WHERE person_id = ? LIMIT 1',
         [id],
-      ).isNotEmpty)
+      ).isNotEmpty) {
         return false;
+      }
       database.execute('DELETE FROM people WHERE id = ?', [id]);
       return true;
     });
@@ -393,26 +394,30 @@ class ArchiveRepository {
     for (final person in archive.people) {
       if (person.id.isEmpty ||
           person.name.trim().isEmpty ||
-          !ids.add(person.id))
+          !ids.add(person.id)) {
         throw const FormatException('人物资料不完整或存在重复 ID。');
+      }
     }
     final eventIds = <String>{};
     for (final event in archive.events) {
       if (event.id.isEmpty ||
           event.title.trim().isEmpty ||
-          !eventIds.add(event.id))
+          !eventIds.add(event.id)) {
         throw const FormatException('事件资料不完整或存在重复 ID。');
+      }
       _validateEvent(event);
-      if (event.people.any((link) => !ids.contains(link.personId)))
+      if (event.people.any((link) => !ids.contains(link.personId))) {
         throw const FormatException('事件关联了不存在的人物。');
+      }
     }
   }
 
   void _validateEvent(EventItem event) {
     if (event.title.trim().isEmpty ||
         event.start.isEmpty ||
-        event.people.isEmpty)
+        event.people.isEmpty) {
       throw const FormatException('请填写事件标题、时间并关联至少一位人物。');
+    }
     if (event.precision == Precision.range &&
         event.end != null &&
         event.end!.isNotEmpty &&

@@ -298,11 +298,12 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     try {
       final archive = await _repository.load();
       unawaited(_updateWidget(archive));
-      if (mounted)
+      if (mounted) {
         setState(() {
           _archive = archive;
           _error = null;
         });
+      }
     } catch (_) {
       if (mounted) setState(() => _error = '无法打开本地档案，请从备份恢复。');
     }
@@ -451,8 +452,9 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   @override
   Widget build(BuildContext context) {
     final archive = _archive;
-    if (archive == null)
+    if (archive == null) {
       return Scaffold(body: Center(child: Text(_error ?? '正在打开本地档案…')));
+    }
     final people = _filteredPeople(archive);
     final events = _filteredEvents(archive);
     return LayoutBuilder(
@@ -861,7 +863,7 @@ class FilterBar extends StatelessWidget {
                 builder: (_) =>
                     DateRangeDialog(from: filters.from, to: filters.to),
               );
-              if (range != null)
+              if (range != null) {
                 onChanged(
                   filters.copyWith(
                     from: range.from,
@@ -870,6 +872,7 @@ class FilterBar extends StatelessWidget {
                     clearTo: range.to == null,
                   ),
                 );
+              }
             },
             icon: const Icon(Icons.date_range_outlined, size: 18),
             label: Text(
@@ -1177,8 +1180,9 @@ class PeopleList extends StatelessWidget {
   final ValueChanged<String> onOpen;
   @override
   Widget build(BuildContext context) {
-    if (people.isEmpty)
+    if (people.isEmpty) {
       return const EmptyState(title: '没有匹配的人物', text: '调整搜索条件，或新建人物档案。');
+    }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
       itemCount: people.length,
@@ -1264,14 +1268,16 @@ class ArchiveDetail extends StatelessWidget {
               const Spacer(),
               PopupMenuButton<String>(
                 onSelected: (action) {
-                  if (action == 'edit')
+                  if (action == 'edit') {
                     person != null
                         ? onEditPerson(person!)
                         : onEditEvent(event!);
-                  if (action == 'delete')
+                  }
+                  if (action == 'delete') {
                     person != null
                         ? onDeletePerson(person!)
                         : onDeleteEvent(event!);
+                  }
                 },
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 'edit', child: Text('编辑')),
@@ -1547,7 +1553,7 @@ class _EventEditorState extends State<EventEditor> {
     text: widget.initial?.sources.join('，'),
   );
   late Precision _precision = widget.initial?.precision ?? Precision.day;
-  late List<PersonLink> _links =
+  late final List<PersonLink> _links =
       widget.initial?.people.toList() ??
       [PersonLink(personId: widget.people.first.id, role: Role.participant)];
   @override
@@ -1583,7 +1589,7 @@ class _EventEditorState extends State<EventEditor> {
               SizedBox(
                 width: 120,
                 child: DropdownButtonFormField<Precision>(
-                  value: _precision,
+                  initialValue: _precision,
                   isDense: true,
                   decoration: const InputDecoration(labelText: '时间精度'),
                   borderRadius: const BorderRadius.all(Radius.circular(12)),
@@ -1699,7 +1705,7 @@ class _EventEditorState extends State<EventEditor> {
         children: [
           Expanded(
             child: DropdownButtonFormField<String>(
-              value: link.personId,
+              initialValue: link.personId,
               borderRadius: const BorderRadius.all(Radius.circular(12)),
               dropdownColor: AtlasPalette.card,
               elevation: 6,
@@ -1722,7 +1728,7 @@ class _EventEditorState extends State<EventEditor> {
           const SizedBox(width: 8),
           Expanded(
             child: DropdownButtonFormField<Role>(
-              value: link.role,
+              initialValue: link.role,
               borderRadius: const BorderRadius.all(Radius.circular(12)),
               dropdownColor: AtlasPalette.card,
               elevation: 6,
@@ -1756,12 +1762,13 @@ class _EventEditorState extends State<EventEditor> {
     final candidate = widget.people
         .where((person) => !used.contains(person.id))
         .firstOrNull;
-    if (candidate != null)
+    if (candidate != null) {
       setState(
         () => _links.add(
           PersonLink(personId: candidate.id, role: Role.participant),
         ),
       );
+    }
   }
 
   Future<void> _pickDate(TextEditingController controller) async {
