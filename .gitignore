@@ -1,10 +1,15 @@
 # macOS
 .DS_Store
+/事件录.app/
+/事件录.app.backup-*/
 
 # Local tools and secrets
 .tools/
 .env*
 *.pem
+
+# Generated local reports
+/.qoder/better-harness/
 
 # Leftover web build artifacts
 /node_modules/
