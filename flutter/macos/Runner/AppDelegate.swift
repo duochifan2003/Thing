@@ -42,7 +42,7 @@ private final class WidgetServer {
   private let queue = DispatchQueue(label: "local.munch.eventatlas.widget-server")
   private let lock = NSLock()
   private var socket: Int32 = -1
-  private var payload = Data("{\"events\":[]}".utf8)
+  private var payload: Data?
 
   init() {
     socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
@@ -96,8 +96,10 @@ private final class WidgetServer {
       lock.lock()
       let body = payload
       lock.unlock()
-      let headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
-      let response = Data(headers.utf8) + body
+      let responseBody = body ?? Data()
+      let status = body == nil ? "503 Service Unavailable" : "200 OK"
+      let headers = "HTTP/1.1 \(status)\r\nContent-Type: application/json\r\nContent-Length: \(responseBody.count)\r\nConnection: close\r\n\r\n"
+      let response = Data(headers.utf8) + responseBody
       response.withUnsafeBytes { buffer in
         guard let baseAddress = buffer.baseAddress else { return }
         _ = send(connection, baseAddress, buffer.count, 0)
