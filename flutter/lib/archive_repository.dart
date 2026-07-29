@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -40,8 +41,13 @@ class ArchiveRepository {
           (await getApplicationSupportDirectory()).path,
           'person-event-atlas.sqlite',
         );
+    if (databaseFile != ':memory:') {
+      await Directory(path.dirname(databaseFile)).create(recursive: true);
+    }
     final database = sqlite3.open(databaseFile);
     database.execute('PRAGMA foreign_keys = ON');
+    database.execute('PRAGMA journal_mode = WAL');
+    database.execute('PRAGMA busy_timeout = 1000');
     database.execute('''
       CREATE TABLE IF NOT EXISTS people (
         id TEXT PRIMARY KEY,
@@ -185,15 +191,17 @@ class ArchiveRepository {
 
   Future<bool> deletePerson(String id) => _serialize(() async {
     final database = await _open();
-    return _transaction(database, () {
+    final deleted = _transaction(database, () {
       if (database.select(
         'SELECT event_id FROM event_people WHERE person_id = ? LIMIT 1',
         [id],
-      ).isNotEmpty)
+      ).isNotEmpty) {
         return false;
+      }
       database.execute('DELETE FROM people WHERE id = ?', [id]);
       return true;
     });
+    return deleted;
   });
 
   Future<void> deleteEvent(String id) => _serialize(() async {
@@ -319,7 +327,7 @@ class ArchiveRepository {
         .map(
           (link) => PersonLink(
             personId: link['person_id'] as String,
-            role: Role.values.byName(link['role'] as String),
+            role: _roleFromName(link['role'] as String),
           ),
         )
         .toList(),
@@ -386,26 +394,30 @@ class ArchiveRepository {
     for (final person in archive.people) {
       if (person.id.isEmpty ||
           person.name.trim().isEmpty ||
-          !ids.add(person.id))
+          !ids.add(person.id)) {
         throw const FormatException('人物资料不完整或存在重复 ID。');
+      }
     }
     final eventIds = <String>{};
     for (final event in archive.events) {
       if (event.id.isEmpty ||
           event.title.trim().isEmpty ||
-          !eventIds.add(event.id))
+          !eventIds.add(event.id)) {
         throw const FormatException('事件资料不完整或存在重复 ID。');
+      }
       _validateEvent(event);
-      if (event.people.any((link) => !ids.contains(link.personId)))
+      if (event.people.any((link) => !ids.contains(link.personId))) {
         throw const FormatException('事件关联了不存在的人物。');
+      }
     }
   }
 
   void _validateEvent(EventItem event) {
     if (event.title.trim().isEmpty ||
         event.start.isEmpty ||
-        event.people.isEmpty)
+        event.people.isEmpty) {
       throw const FormatException('请填写事件标题、时间并关联至少一位人物。');
+    }
     if (event.precision == Precision.range &&
         event.end != null &&
         event.end!.isNotEmpty &&
@@ -429,5 +441,11 @@ class ArchiveRepository {
 
 List<String> _strings(String source) =>
     (jsonDecode(source) as List).cast<String>();
+
+Role _roleFromName(String value) => switch (value) {
+  'organizer' || 'subject' => Role.organizer,
+  'participant' || 'witness' || 'mentioned' => Role.participant,
+  _ => throw FormatException('不支持的人物角色：$value'),
+};
 
 String _revisionId() => 'r-${DateTime.now().microsecondsSinceEpoch}';

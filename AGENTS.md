@@ -34,3 +34,5 @@ Use `dart format` before submitting changes. Follow Dart conventions: two-space 
 ## Commits
 
 Keep commits scoped and imperative. State user impact and the verification commands in pull requests.
+
+A pre-commit hook at `flutter/tool/git-hooks/pre-commit` runs `dart analyze` and `flutter test` whenever staged changes touch `flutter/`. Enable it once per clone: `ln -sf ../../flutter/tool/git-hooks/pre-commit .git/hooks/pre-commit`.

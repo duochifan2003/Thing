@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as path;
 import 'package:person_event_atlas/archive.dart';
 import 'package:person_event_atlas/archive_repository.dart';
 
@@ -76,7 +79,7 @@ void main() {
       description: '',
       tags: const [],
       sources: const [],
-      people: const [PersonLink(personId: 'p-1', role: Role.subject)],
+      people: const [PersonLink(personId: 'p-1', role: Role.organizer)],
       createdAt: DateTime(2025),
       updatedAt: DateTime(2025),
     );
@@ -100,6 +103,20 @@ void main() {
     expect(preview.duplicate, 1);
     expect((await repository.load()).revisions.last.entityId, 'p-2');
   });
+
+  test('creates a missing parent directory for a file database', () async {
+    final root = await Directory.systemTemp.createTemp('event-atlas-test-');
+    final databasePath = path.join(root.path, 'new', 'archive.sqlite');
+    final fileRepository = ArchiveRepository(databasePath: databasePath);
+    addTearDown(() async {
+      await fileRepository.close();
+      await root.delete(recursive: true);
+    });
+
+    await fileRepository.load();
+
+    expect(File(databasePath).existsSync(), isTrue);
+  });
 }
 
 Person _person(String id) => Person(
@@ -122,7 +139,7 @@ EventItem _event(String id, String personId) => EventItem(
   description: '',
   tags: const [],
   sources: const [],
-  people: [PersonLink(personId: personId, role: Role.subject)],
+  people: [PersonLink(personId: personId, role: Role.organizer)],
   createdAt: DateTime(2025),
   updatedAt: DateTime(2025),
 );

@@ -1,0 +1,41 @@
+#!/bin/sh
+# Pre-commit 验证：暂存区涉及 flutter/ 时运行 analyze 和 test。
+# 安装方式（在仓库根目录执行一次）：
+#   ln -sf ../../flutter/tool/git-hooks/pre-commit .git/hooks/pre-commit
+set -e
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# 仅当本次提交涉及 flutter/ 目录时才执行验证
+if git diff --cached --name-only --diff-filter=ACMRD | grep -q '^flutter/'; then
+  :
+else
+  exit 0
+fi
+
+FLUTTER_BIN="$REPO_ROOT/.tools/flutter/bin"
+if [ ! -x "$FLUTTER_BIN/flutter" ]; then
+  # 回退到 PATH 中的 flutter
+  FLUTTER_BIN=$(dirname "$(command -v flutter)") || {
+    echo "pre-commit: 未找到 flutter，跳过验证" >&2
+    exit 0
+  }
+fi
+
+cd "$REPO_ROOT/flutter"
+
+echo "pre-commit: dart analyze ..."
+# 注：flutter analyze 在含非 ASCII 字符的路径下会触发分析服务器崩溃，
+# 因此使用 dart analyze（同一套 analysis_options 规则）。
+"$FLUTTER_BIN/dart" analyze || {
+  echo "pre-commit: analyze 失败，已阻止提交" >&2
+  exit 1
+}
+
+echo "pre-commit: flutter test ..."
+"$FLUTTER_BIN/flutter" test || {
+  echo "pre-commit: 测试失败，已阻止提交" >&2
+  exit 1
+}
+
+echo "pre-commit: 验证通过"
