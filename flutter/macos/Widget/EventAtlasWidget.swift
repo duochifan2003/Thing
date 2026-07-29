@@ -2,6 +2,9 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
+private let widgetDefaultsSuite = "local.munch.eventatlas.widget-data"
+private let recentEventsKey = "recentEvents"
+
 struct ArchiveEvent: Codable, Identifiable {
   let id: String
   let title: String
@@ -12,7 +15,8 @@ struct ArchiveEvent: Codable, Identifiable {
 
   var dateLabel: String {
     let format: (String) -> String = { $0.replacingOccurrences(of: "-", with: ".") }
-    return precision == "range" ? "\(format(start)) — \(end.map(format) ?? "至今")" : format(start)
+    let formattedEnd = end.flatMap { $0.isEmpty ? nil : format($0) }
+    return precision == "range" ? "\(format(start)) — \(formattedEnd ?? "至今")" : format(start)
   }
 }
 
@@ -28,17 +32,15 @@ struct EventAtlasProvider: TimelineProvider {
   }
 
   func getSnapshot(in context: Context, completion: @escaping (EventAtlasEntry) -> Void) {
-    Task { completion(await entry()) }
+    completion(entry())
   }
 
   func getTimeline(in context: Context, completion: @escaping (Timeline<EventAtlasEntry>) -> Void) {
-    Task {
-      completion(Timeline(entries: [await entry()], policy: .after(.now.addingTimeInterval(15 * 60))))
-    }
+    completion(Timeline(entries: [entry()], policy: .after(.now.addingTimeInterval(15 * 60))))
   }
 
-  private func entry() async -> EventAtlasEntry {
-    guard let events = await ArchiveReader().recentEvents() else {
+  private func entry() -> EventAtlasEntry {
+    guard let events = ArchiveReader().recentEvents() else {
       return EventAtlasEntry(date: .now, state: .unavailable)
     }
     return EventAtlasEntry(date: .now, state: events.isEmpty ? .empty : .content(events))
@@ -46,19 +48,11 @@ struct EventAtlasProvider: TimelineProvider {
 }
 
 private struct ArchiveReader {
-  private let cacheKey = "recentEvents"
-
-  func recentEvents() async -> [ArchiveEvent]? {
-    do {
-      let (data, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:48127/recent")!)
-      guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-      let events = try JSONDecoder().decode(ArchiveResponse.self, from: data).events
-      UserDefaults.standard.set(data, forKey: cacheKey)
-      return events
-    } catch {
-      guard let data = UserDefaults.standard.data(forKey: cacheKey) else { return nil }
-      return try? JSONDecoder().decode(ArchiveResponse.self, from: data).events
+  func recentEvents() -> [ArchiveEvent]? {
+    guard let data = UserDefaults(suiteName: widgetDefaultsSuite)?.data(forKey: recentEventsKey) else {
+      return nil
     }
+    return try? JSONDecoder().decode(ArchiveResponse.self, from: data).events
   }
 
   private struct ArchiveResponse: Codable { let events: [ArchiveEvent] }
