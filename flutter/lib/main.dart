@@ -1589,7 +1589,7 @@ class _EventEditorState extends State<EventEditor> {
               SizedBox(
                 width: 120,
                 child: DropdownButtonFormField<Precision>(
-                  initialValue: _precision,
+                  value: _precision,
                   isDense: true,
                   decoration: const InputDecoration(labelText: '时间精度'),
                   borderRadius: const BorderRadius.all(Radius.circular(12)),
@@ -1705,7 +1705,7 @@ class _EventEditorState extends State<EventEditor> {
         children: [
           Expanded(
             child: DropdownButtonFormField<String>(
-              initialValue: link.personId,
+              value: link.personId,
               borderRadius: const BorderRadius.all(Radius.circular(12)),
               dropdownColor: AtlasPalette.card,
               elevation: 6,
@@ -1728,7 +1728,7 @@ class _EventEditorState extends State<EventEditor> {
           const SizedBox(width: 8),
           Expanded(
             child: DropdownButtonFormField<Role>(
-              initialValue: link.role,
+              value: link.role,
               borderRadius: const BorderRadius.all(Radius.circular(12)),
               dropdownColor: AtlasPalette.card,
               elevation: 6,

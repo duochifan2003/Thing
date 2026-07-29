@@ -80,9 +80,16 @@ private final class WidgetServer {
   }
 
   private func acceptConnections() {
-    while socket >= 0 {
-      let connection = accept(socket, nil, nil)
-      guard connection >= 0 else { continue }
+    while true {
+      lock.lock()
+      let fd = socket
+      lock.unlock()
+      guard fd >= 0 else { break }
+      let connection = accept(fd, nil, nil)
+      if connection < 0 {
+        if errno == EINTR { continue }
+        break
+      }
       defer { close(connection) }
       var request = [UInt8](repeating: 0, count: 4096)
       _ = recv(connection, &request, request.count, 0)
@@ -98,5 +105,11 @@ private final class WidgetServer {
     }
   }
 
-  deinit { if socket >= 0 { close(socket) } }
+  deinit {
+    lock.lock()
+    let fd = socket
+    socket = -1
+    lock.unlock()
+    if fd >= 0 { close(fd) }
+  }
 }
