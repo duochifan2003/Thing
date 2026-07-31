@@ -1,7 +1,7 @@
 name: person_event_atlas
 description: 本地优先的人物事件档案。
 publish_to: none
-version: 0.1.0+1
+version: 0.1.0+15
 
 environment:
   sdk: ^3.8.0
@@ -26,3 +26,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/logo.png
+    - THIRD_PARTY_NOTICES.md

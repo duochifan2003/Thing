@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'archive.dart';
 import 'archive_repository.dart';
+import 'event_location.dart';
 
 abstract final class AtlasPalette {
   static const paper = Color(0xfff7f7f1);
@@ -19,7 +21,47 @@ abstract final class AtlasPalette {
   static const line = Color(0xffdfe5df);
   static const green = Color(0xff185c45);
   static const sage = Color(0xffdce7d6);
+  static const navigationSelected = Color(0xffc5dbc0);
+  static const interactiveHover = Color(0x1f185c45);
+  static const interactiveSplash = Color(0x33185c45);
   static const accent = Color(0xffdd704c);
+}
+
+Color _eventStatusColor(EventStatus status) => switch (status) {
+  EventStatus.scheduled => const Color(0xffffeee7),
+  EventStatus.active => const Color(0xffe4efff),
+  EventStatus.completed => const Color(0xffe8f2e5),
+  EventStatus.cancelled => const Color(0xffeeeeee),
+};
+
+Color _eventStatusTextColor(EventStatus status) => switch (status) {
+  EventStatus.scheduled => AtlasPalette.accent,
+  EventStatus.active => const Color(0xff245b91),
+  EventStatus.completed => const Color(0xff41614f),
+  EventStatus.cancelled => AtlasPalette.muted,
+};
+
+String _formatLocalDate(DateTime date) =>
+    '${date.year.toString().padLeft(4, '0')}-'
+    '${date.month.toString().padLeft(2, '0')}-'
+    '${date.day.toString().padLeft(2, '0')}';
+
+DateTime? _parseLocalDate(String value) {
+  if (value.length != 10) return null;
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null || _formatLocalDate(parsed) != value) return null;
+  return DateTime(parsed.year, parsed.month, parsed.day);
+}
+
+Widget _detailTransition(Widget child, Animation<double> animation) {
+  final slide = Tween<Offset>(
+    begin: const Offset(0.06, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+  return FadeTransition(
+    opacity: animation,
+    child: SlideTransition(position: slide, child: child),
+  );
 }
 
 class _EditorDialog extends StatelessWidget {
@@ -37,16 +79,25 @@ class _EditorDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dialogHeight = MediaQuery.sizeOf(context).height - 96;
+    final size = MediaQuery.sizeOf(context);
+    final horizontalInset = size.width < 720 ? 20.0 : 40.0;
+    final dialogWidth = math.min(
+      contentWidth,
+      math.max(0.0, size.width - horizontalInset * 2),
+    );
+    final dialogHeight = math.max(240.0, size.height - 96);
     return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 48),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: horizontalInset,
+        vertical: 48,
+      ),
       clipBehavior: Clip.antiAlias,
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SizedBox(
-          width: contentWidth + 48,
-          height: dialogHeight,
-          child: Column(
+      child: SizedBox(
+        width: dialogWidth,
+        height: dialogHeight,
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -176,9 +227,21 @@ class PersonEventAtlasApp extends StatelessWidget {
             color: AtlasPalette.green,
             fontWeight: FontWeight.w700,
           ),
-          indicatorColor: AtlasPalette.card,
-          unselectedIconTheme: IconThemeData(color: Color(0xff48534c)),
-          unselectedLabelTextStyle: TextStyle(color: Color(0xff48534c)),
+          indicatorColor: AtlasPalette.navigationSelected,
+          indicatorShape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
+          useIndicator: true,
+          unselectedIconTheme: IconThemeData(color: Color(0xff536159)),
+          unselectedLabelTextStyle: TextStyle(color: Color(0xff536159)),
+        ),
+        navigationBarTheme: const NavigationBarThemeData(
+          backgroundColor: AtlasPalette.sidebar,
+          surfaceTintColor: Colors.transparent,
+          indicatorColor: AtlasPalette.navigationSelected,
+          overlayColor: WidgetStatePropertyAll<Color?>(
+            AtlasPalette.interactiveHover,
+          ),
         ),
         chipTheme: const ChipThemeData(
           backgroundColor: Color(0xffedf3ea),
@@ -218,7 +281,7 @@ class PersonEventAtlasApp extends StatelessWidget {
   }
 }
 
-enum ArchiveView { timeline, people }
+enum ArchiveView { timeline, people, tags }
 
 class ArchiveFilters {
   const ArchiveFilters({
@@ -347,7 +410,10 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   Future<void> _editPerson([Person? initial]) async {
     final person = await showDialog<Person>(
       context: context,
-      builder: (_) => PersonEditor(initial: initial),
+      builder: (_) => PersonEditor(
+        initial: initial,
+        customTags: _archive == null ? const [] : _customTags(_archive!),
+      ),
     );
     if (person == null) return;
     await _write(() => _repository.savePerson(person));
@@ -363,11 +429,43 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     }
     final event = await showDialog<EventItem>(
       context: context,
-      builder: (_) => EventEditor(initial: initial, people: archive.people),
+      builder: (_) => EventEditor(
+        initial: initial,
+        people: archive.people,
+        events: archive.events,
+        customTags: _customTags(archive),
+      ),
     );
     if (event == null) return;
     await _write(() => _repository.saveEvent(event));
     if (mounted) _selectEvent(event.id);
+  }
+
+  Future<void> _saveCustomTags(List<String> tags) async {
+    await _write(() => _repository.saveCustomTags(tags));
+  }
+
+  Future<void> _deleteCustomTag(String tag) async {
+    final archive = _archive;
+    if (archive == null) return;
+    final updated = archive.copyWith(
+      customTags: archive.customTags.where((item) => item != tag).toList(),
+      people: archive.people
+          .map(
+            (person) => person.copyWith(
+              tags: person.tags.where((item) => item != tag).toList(),
+            ),
+          )
+          .toList(),
+      events: archive.events
+          .map(
+            (event) => event.copyWith(
+              tags: event.tags.where((item) => item != tag).toList(),
+            ),
+          )
+          .toList(),
+    );
+    await _write(() => _repository.replace(updated));
   }
 
   Future<void> _deletePerson(Person person) async {
@@ -381,13 +479,59 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     await _reload();
   }
 
+  Future<void> _cancelEvent(EventItem event) async {
+    if (!await _confirm(
+      '取消事件',
+      '确定取消「${event.title}」吗？取消后仍会保留记录。',
+      confirmLabel: '取消事件',
+    )) {
+      return;
+    }
+    await _write(
+      () => _repository.transitionEvent(event.id, EventStatus.cancelled),
+    );
+  }
+
+  Future<void> _transitionEvent(EventItem event, EventStatus status) async {
+    await _write(() => _repository.transitionEvent(event.id, status));
+  }
+
+  Future<void> _postponeEvent(EventItem event) async {
+    final initialDate = _parseLocalDate(event.start) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100),
+      helpText: event.start.isEmpty ? '设置日期' : '延期至',
+      cancelText: '取消',
+      confirmText: '保存',
+    );
+    if (picked == null) return;
+    final date = _formatLocalDate(picked);
+    await _write(
+      () => _repository.saveEvent(
+        event.copyWith(
+          precision: Precision.day,
+          start: date,
+          clearEnd: true,
+          updatedAt: DateTime.now(),
+        ),
+      ),
+    );
+  }
+
   Future<void> _deleteEvent(EventItem event) async {
-    if (!await _confirm('删除事件', '确定删除「${event.title}」吗？此操作不可撤销。')) return;
+    if (!await _confirm('永久删除事件', '确定永久删除「${event.title}」吗？此操作不可撤销。')) return;
     await _write(() => _repository.deleteEvent(event.id));
     _clearSelection();
   }
 
-  Future<bool> _confirm(String title, String body) async =>
+  Future<bool> _confirm(
+    String title,
+    String body, {
+    String confirmLabel = '删除',
+  }) async =>
       await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -400,7 +544,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('删除'),
+              child: Text(confirmLabel),
             ),
           ],
         ),
@@ -460,80 +604,148 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= 900;
+        final tagsView = _view == ArchiveView.tags;
         final selected = _selectedPerson ?? _selectedEvent;
-        final list = _view == ArchiveView.timeline
-            ? TimelineList(
-                events: events,
-                people: archive.people,
-                onOpen: _selectEvent,
-              )
-            : PeopleList(
-                people: people,
-                events: archive.events,
-                onOpen: _selectPerson,
-              );
+        final list = switch (_view) {
+          ArchiveView.timeline => TimelineList(
+            events: events,
+            people: archive.people,
+            onOpen: _selectEvent,
+          ),
+          ArchiveView.people => PeopleList(
+            people: people,
+            events: archive.events,
+            onOpen: _selectPerson,
+          ),
+          ArchiveView.tags => CustomTagsPage(
+            customTags: _customTags(archive),
+            eventCounts: {
+              for (final tag in _customTags(archive))
+                tag: archive.events
+                    .where((event) => event.tags.contains(tag))
+                    .length,
+            },
+            onChanged: _saveCustomTags,
+            onDelete: _deleteCustomTag,
+          ),
+        };
         final workspace = Column(
           children: [
             _Header(
               view: _view,
-              onNewPerson: () => _editPerson(),
-              onNewEvent: () => _editEvent(),
               onImport: _importArchive,
               onExport: _exportArchive,
               showArchiveMenu: !desktop,
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-              child: TextField(
-                onChanged: (value) => setState(() => _query = value),
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: '搜索人物、事件、地点或标签',
+            if (!tagsView)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: TextField(
+                  onChanged: (value) => setState(() => _query = value),
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: '搜索人物、事件、地点或标签',
+                  ),
                 ),
               ),
-            ),
-            FilterBar(
-              archive: archive,
-              filters: _filters,
-              onChanged: (value) => setState(() => _filters = value),
-            ),
+            if (!tagsView)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: FilterBar(
+                      archive: archive,
+                      filters: _filters,
+                      onChanged: (value) => setState(() => _filters = value),
+                    ),
+                  ),
+                  if (desktop)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(0, 0, 16, 12),
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 42),
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                        ),
+                        onPressed: _view == ArchiveView.timeline
+                            ? _editEvent
+                            : _editPerson,
+                        icon: const Icon(Icons.add),
+                        label: Text(
+                          _view == ArchiveView.timeline ? '新增事件' : '新增人物',
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            if (_view == ArchiveView.timeline && !tagsView)
+              ReminderPanel(events: _dueEvents(archive), onOpen: _selectEvent),
             Expanded(
               child: desktop
                   ? Row(
                       children: [
                         Expanded(child: list),
-                        if (selected != null)
-                          SizedBox(
-                            width: 390,
-                            child: ArchiveDetail(
-                              person: _selectedPerson,
-                              event: _selectedEvent,
-                              archive: archive,
-                              onClose: _clearSelection,
-                              onPerson: _selectPerson,
-                              onEvent: _selectEvent,
-                              onEditPerson: _editPerson,
-                              onEditEvent: _editEvent,
-                              onDeletePerson: _deletePerson,
-                              onDeleteEvent: _deleteEvent,
-                            ),
-                          ),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          alignment: Alignment.centerRight,
+                          child: selected != null && !tagsView
+                              ? AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 220),
+                                  transitionBuilder: _detailTransition,
+                                  child: SizedBox(
+                                    key: ValueKey(
+                                      'detail-${_eventId ?? _personId}',
+                                    ),
+                                    width: 390,
+                                    child: ArchiveDetail(
+                                      person: _selectedPerson,
+                                      event: _selectedEvent,
+                                      archive: archive,
+                                      onClose: _clearSelection,
+                                      onPerson: _selectPerson,
+                                      onEvent: _selectEvent,
+                                      onEditPerson: _editPerson,
+                                      onEditEvent: _editEvent,
+                                      onDeletePerson: _deletePerson,
+                                      onDeleteEvent: _deleteEvent,
+                                      onCancelEvent: _cancelEvent,
+                                      onTransitionEvent: _transitionEvent,
+                                      onPostponeEvent: _postponeEvent,
+                                    ),
+                                  ),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
                       ],
                     )
-                  : selected != null
-                  ? ArchiveDetail(
-                      person: _selectedPerson,
-                      event: _selectedEvent,
-                      archive: archive,
-                      onClose: _clearSelection,
-                      onPerson: _selectPerson,
-                      onEvent: _selectEvent,
-                      onEditPerson: _editPerson,
-                      onEditEvent: _editEvent,
-                      onDeletePerson: _deletePerson,
-                      onDeleteEvent: _deleteEvent,
-                    )
-                  : list,
+                  : AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      transitionBuilder: _detailTransition,
+                      child: selected != null && !tagsView
+                          ? KeyedSubtree(
+                              key: ValueKey('detail-${_eventId ?? _personId}'),
+                              child: ArchiveDetail(
+                                person: _selectedPerson,
+                                event: _selectedEvent,
+                                archive: archive,
+                                onClose: _clearSelection,
+                                onPerson: _selectPerson,
+                                onEvent: _selectEvent,
+                                onEditPerson: _editPerson,
+                                onEditEvent: _editEvent,
+                                onDeletePerson: _deletePerson,
+                                onDeleteEvent: _deleteEvent,
+                                onCancelEvent: _cancelEvent,
+                                onTransitionEvent: _transitionEvent,
+                                onPostponeEvent: _postponeEvent,
+                              ),
+                            )
+                          : KeyedSubtree(
+                              key: ValueKey('list-${_view.name}'),
+                              child: list,
+                            ),
+                    ),
             ),
           ],
         );
@@ -600,6 +812,11 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                             selectedIcon: Icon(Icons.people),
                             label: Text('人物目录'),
                           ),
+                          NavigationRailDestination(
+                            icon: Icon(Icons.sell_outlined),
+                            selectedIcon: Icon(Icons.sell),
+                            label: Text('标签管理'),
+                          ),
                         ],
                       ),
                       Expanded(child: workspace),
@@ -627,9 +844,14 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                       selectedIcon: Icon(Icons.people),
                       label: '人物',
                     ),
+                    NavigationDestination(
+                      icon: Icon(Icons.sell_outlined),
+                      selectedIcon: Icon(Icons.sell),
+                      label: '标签',
+                    ),
                   ],
                 ),
-          floatingActionButton: desktop
+          floatingActionButton: desktop || tagsView
               ? null
               : FloatingActionButton.extended(
                   onPressed: _view == ArchiveView.timeline
@@ -641,6 +863,28 @@ class _ArchiveHomeState extends State<ArchiveHome> {
         );
       },
     );
+  }
+
+  List<EventItem> _dueEvents(Archive archive) {
+    final today = _formatLocalDate(DateTime.now());
+    return archive.events
+        .where(
+          (event) =>
+              event.status == EventStatus.scheduled &&
+              event.start.isNotEmpty &&
+              event.start.compareTo(today) <= 0,
+        )
+        .toList()
+      ..sort((left, right) => left.start.compareTo(right.start));
+  }
+
+  List<String> _customTags(Archive archive) {
+    final tags = {
+      ...archive.customTags,
+      ...archive.people.expand((person) => person.tags),
+      ...archive.events.expand((event) => event.tags),
+    };
+    return tags.toList()..sort();
   }
 
   List<EventItem> _filteredEvents(Archive archive) {
@@ -723,15 +967,11 @@ class _Brand extends StatelessWidget {
 class _Header extends StatelessWidget {
   const _Header({
     required this.view,
-    required this.onNewPerson,
-    required this.onNewEvent,
     required this.onImport,
     required this.onExport,
     required this.showArchiveMenu,
   });
   final ArchiveView view;
-  final VoidCallback onNewPerson;
-  final VoidCallback onNewEvent;
   final Future<void> Function() onImport;
   final Future<void> Function() onExport;
   final bool showArchiveMenu;
@@ -753,10 +993,11 @@ class _Header extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
-                view == ArchiveView.timeline ? '事件时间线' : '人物目录',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
+              Text(switch (view) {
+                ArchiveView.timeline => '事件时间线',
+                ArchiveView.people => '人物目录',
+                ArchiveView.tags => '标签管理',
+              }, style: Theme.of(context).textTheme.headlineSmall),
             ],
           ),
         ),
@@ -773,17 +1014,6 @@ class _Header extends StatelessWidget {
             ],
           ),
         if (showArchiveMenu) const SizedBox(width: 4),
-        OutlinedButton.icon(
-          onPressed: onNewPerson,
-          icon: const Icon(Icons.add),
-          label: const Text('新增人物'),
-        ),
-        const SizedBox(width: 8),
-        FilledButton.icon(
-          onPressed: onNewEvent,
-          icon: const Icon(Icons.add),
-          label: const Text('新增事件'),
-        ),
       ],
     ),
   );
@@ -805,89 +1035,91 @@ class FilterBar extends StatelessWidget {
       ...archive.people.expand((person) => person.tags),
       ...archive.events.expand((event) => event.tags),
     }.toList()..sort();
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: Row(
-        children: [
-          _filterMenu<String?>(
-            context,
-            '人物',
-            filters.personId,
-            [
-              const DropdownMenuItem(value: null, child: Text('全部人物')),
-              ...archive.people.map(
-                (person) => DropdownMenuItem(
-                  value: person.id,
-                  child: Text(person.name),
-                ),
+    return SizedBox(
+      width: double.infinity,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+        child: Row(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: Text(
+                '筛选条件',
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(color: AtlasPalette.muted),
               ),
-            ],
-            (value) => onChanged(
-              filters.copyWith(personId: value, clearPerson: value == null),
             ),
-          ),
-          _filterMenu<String?>(
-            context,
-            '标签',
-            filters.tag,
-            [
-              const DropdownMenuItem(value: null, child: Text('全部标签')),
-              ...tags.map(
-                (tag) => DropdownMenuItem(value: tag, child: Text('#$tag')),
-              ),
-            ],
-            (value) => onChanged(
-              filters.copyWith(tag: value, clearTag: value == null),
-            ),
-          ),
-          _filterMenu<Role?>(
-            context,
-            '角色',
-            filters.role,
-            [
-              const DropdownMenuItem(value: null, child: Text('全部角色')),
-              ...Role.values.map(
-                (role) =>
-                    DropdownMenuItem(value: role, child: Text(role.label)),
-              ),
-            ],
-            (value) => onChanged(
-              filters.copyWith(role: value, clearRole: value == null),
-            ),
-          ),
-          OutlinedButton.icon(
-            onPressed: () async {
-              final range = await showDialog<_DateRange>(
-                context: context,
-                builder: (_) =>
-                    DateRangeDialog(from: filters.from, to: filters.to),
-              );
-              if (range != null) {
-                onChanged(
-                  filters.copyWith(
-                    from: range.from,
-                    to: range.to,
-                    clearFrom: range.from == null,
-                    clearTo: range.to == null,
+            _filterMenu<String?>(
+              context,
+              '关联人物',
+              filters.personId,
+              [
+                const DropdownMenuItem(value: null, child: Text('关联人物：全部')),
+                ...archive.people.map(
+                  (person) => DropdownMenuItem(
+                    value: person.id,
+                    child: Text('关联人物：${person.name}'),
                   ),
+                ),
+              ],
+              (value) => onChanged(
+                filters.copyWith(personId: value, clearPerson: value == null),
+              ),
+            ),
+            _filterMenu<String?>(
+              context,
+              '事件标签',
+              filters.tag,
+              [
+                const DropdownMenuItem(value: null, child: Text('事件标签：全部')),
+                ...tags.map(
+                  (tag) =>
+                      DropdownMenuItem(value: tag, child: Text('事件标签：#$tag')),
+                ),
+              ],
+              (value) => onChanged(
+                filters.copyWith(tag: value, clearTag: value == null),
+              ),
+            ),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 42),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+              ),
+              onPressed: () async {
+                final range = await showDialog<_DateRange>(
+                  context: context,
+                  builder: (_) =>
+                      DateRangeDialog(from: filters.from, to: filters.to),
                 );
-              }
-            },
-            icon: const Icon(Icons.date_range_outlined, size: 18),
-            label: Text(
-              filters.from == null && filters.to == null
-                  ? '时间范围'
-                  : '${filters.from ?? '最早'} 至 ${filters.to ?? '现在'}',
+                if (range != null) {
+                  onChanged(
+                    filters.copyWith(
+                      from: range.from,
+                      to: range.to,
+                      clearFrom: range.from == null,
+                      clearTo: range.to == null,
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.date_range_outlined, size: 18),
+              label: Text(
+                filters.from == null && filters.to == null
+                    ? '事件日期：不限'
+                    : '事件日期：${filters.from ?? '最早'} 至 ${filters.to ?? '现在'}',
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          if (filters.active)
-            TextButton(
-              onPressed: () => onChanged(const ArchiveFilters()),
-              child: const Text('清除筛选'),
-            ),
-        ],
+            const SizedBox(width: 8),
+            if (filters.active)
+              TextButton(
+                onPressed: () => onChanged(const ArchiveFilters()),
+                child: const Text('清除筛选'),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -900,16 +1132,33 @@ class FilterBar extends StatelessWidget {
     ValueChanged<T> onChanged,
   ) => Padding(
     padding: const EdgeInsets.only(right: 8),
-    child: DropdownButton<T>(
-      value: value,
-      hint: Text(label),
-      borderRadius: const BorderRadius.all(Radius.circular(12)),
-      dropdownColor: AtlasPalette.card,
-      elevation: 6,
-      items: items,
-      onChanged: (next) {
-        if (next != null || T.toString().contains('null')) onChanged(next as T);
-      },
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: value == null ? AtlasPalette.card : AtlasPalette.sage,
+        border: Border.all(
+          color: value == null ? AtlasPalette.line : AtlasPalette.green,
+        ),
+        borderRadius: const BorderRadius.all(Radius.circular(10)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          hint: Text('$label：全部'),
+          isDense: true,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          icon: const Icon(Icons.keyboard_arrow_down, size: 18),
+          focusColor: Colors.transparent,
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          dropdownColor: AtlasPalette.card,
+          elevation: 6,
+          items: items,
+          onChanged: (next) {
+            if (next != null || T.toString().contains('null')) {
+              onChanged(next as T);
+            }
+          },
+        ),
+      ),
     ),
   );
 }
@@ -940,23 +1189,41 @@ class _DateRangeDialogState extends State<DateRangeDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('筛选时间范围'),
+    title: const Text('筛选事件日期'),
     content: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         TextField(
           controller: _from,
-          decoration: const InputDecoration(
-            labelText: '开始时间',
-            hintText: '2025-01',
+          readOnly: true,
+          onTap: () => _pickDate(_from),
+          decoration: InputDecoration(
+            labelText: '开始日期',
+            hintText: '点击选择日期',
+            suffixIcon: _from.text.isEmpty
+                ? const Icon(Icons.calendar_today, size: 18)
+                : IconButton(
+                    onPressed: () => setState(_from.clear),
+                    icon: const Icon(Icons.clear),
+                    tooltip: '清空日期',
+                  ),
           ),
         ),
         const SizedBox(height: 20),
         TextField(
           controller: _to,
-          decoration: const InputDecoration(
-            labelText: '结束时间',
-            hintText: '2025-12',
+          readOnly: true,
+          onTap: () => _pickDate(_to),
+          decoration: InputDecoration(
+            labelText: '结束日期',
+            hintText: '点击选择日期',
+            suffixIcon: _to.text.isEmpty
+                ? const Icon(Icons.calendar_today, size: 18)
+                : IconButton(
+                    onPressed: () => setState(_to.clear),
+                    icon: const Icon(Icons.clear),
+                    tooltip: '清空日期',
+                  ),
           ),
         ),
       ],
@@ -974,6 +1241,20 @@ class _DateRangeDialogState extends State<DateRangeDialog> {
     ],
   );
 
+  Future<void> _pickDate(TextEditingController controller) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _parseLocalDate(controller.text) ?? DateTime.now(),
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100),
+      helpText: controller == _from ? '选择开始日期' : '选择结束日期',
+      cancelText: '取消',
+      confirmText: '确定',
+    );
+    if (picked == null) return;
+    setState(() => controller.text = _formatLocalDate(picked));
+  }
+
   void _apply() {
     final from = _from.text.trim().isEmpty ? null : _from.text.trim();
     final to = _to.text.trim().isEmpty ? null : _to.text.trim();
@@ -984,6 +1265,53 @@ class _DateRangeDialogState extends State<DateRangeDialog> {
       return;
     }
     Navigator.pop(context, _DateRange(from: from, to: to));
+  }
+}
+
+class ReminderPanel extends StatelessWidget {
+  const ReminderPanel({super.key, required this.events, required this.onOpen});
+
+  final List<EventItem> events;
+  final ValueChanged<String> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    if (events.isEmpty) return const SizedBox.shrink();
+    final today = _formatLocalDate(DateTime.now());
+    return Card(
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.notifications_active_outlined, size: 18),
+                const SizedBox(width: 8),
+                Text('待办提醒', style: Theme.of(context).textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 4),
+            ...events.map(
+              (event) => ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                mouseCursor: SystemMouseCursors.click,
+                hoverColor: AtlasPalette.interactiveHover,
+                splashColor: AtlasPalette.interactiveSplash,
+                onTap: () => onOpen(event.id),
+                title: Text(event.title),
+                subtitle: Text(
+                  event.start == today ? '今天' : '逾期 · ${event.dateLabel}',
+                ),
+                trailing: const Icon(Icons.chevron_right, size: 18),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -1059,6 +1387,9 @@ class TimelineList extends StatelessWidget {
                 child: Card(
                   child: InkWell(
                     borderRadius: BorderRadius.circular(12),
+                    mouseCursor: SystemMouseCursors.click,
+                    hoverColor: AtlasPalette.interactiveHover,
+                    splashColor: AtlasPalette.interactiveSplash,
                     onTap: () => onOpen(event.id),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -1104,6 +1435,20 @@ class TimelineList extends StatelessWidget {
                                   spacing: 6,
                                   runSpacing: 6,
                                   children: [
+                                    Chip(
+                                      backgroundColor: _eventStatusColor(
+                                        event.status,
+                                      ),
+                                      label: Text(
+                                        event.status.label,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: _eventStatusTextColor(
+                                            event.status,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                     ...event.tags.map(
                                       (tag) => Chip(
                                         label: Text(
@@ -1196,6 +1541,9 @@ class PeopleList extends StatelessWidget {
             .length;
         return Card(
           child: ListTile(
+            mouseCursor: SystemMouseCursors.click,
+            hoverColor: AtlasPalette.interactiveHover,
+            splashColor: AtlasPalette.interactiveSplash,
             onTap: () => onOpen(person.id),
             contentPadding: const EdgeInsets.all(16),
             leading: CircleAvatar(
@@ -1230,6 +1578,9 @@ class ArchiveDetail extends StatelessWidget {
     required this.onEditEvent,
     required this.onDeletePerson,
     required this.onDeleteEvent,
+    required this.onCancelEvent,
+    required this.onTransitionEvent,
+    required this.onPostponeEvent,
   });
   final Person? person;
   final EventItem? event;
@@ -1241,6 +1592,9 @@ class ArchiveDetail extends StatelessWidget {
   final ValueChanged<EventItem> onEditEvent;
   final ValueChanged<Person> onDeletePerson;
   final ValueChanged<EventItem> onDeleteEvent;
+  final ValueChanged<EventItem> onCancelEvent;
+  final void Function(EventItem, EventStatus) onTransitionEvent;
+  final ValueChanged<EventItem> onPostponeEvent;
   @override
   Widget build(BuildContext context) {
     final item = person ?? event;
@@ -1273,15 +1627,45 @@ class ArchiveDetail extends StatelessWidget {
                         ? onEditPerson(person!)
                         : onEditEvent(event!);
                   }
-                  if (action == 'delete') {
-                    person != null
-                        ? onDeletePerson(person!)
-                        : onDeleteEvent(event!);
+                  if (person != null && action == 'delete') {
+                    onDeletePerson(person!);
+                  }
+                  if (event != null) {
+                    if (action == 'cancel') onCancelEvent(event!);
+                    if (action == 'postpone') onPostponeEvent(event!);
+                    if (action == 'start') {
+                      onTransitionEvent(event!, EventStatus.active);
+                    }
+                    if (action == 'complete') {
+                      onTransitionEvent(event!, EventStatus.completed);
+                    }
+                    if (action == 'permanent-delete') {
+                      onDeleteEvent(event!);
+                    }
                   }
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('编辑')),
-                  PopupMenuItem(value: 'delete', child: Text('删除')),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'edit', child: Text('编辑')),
+                  if (event != null && event!.status == EventStatus.scheduled)
+                    PopupMenuItem(
+                      value: 'postpone',
+                      child: Text(event!.start.isEmpty ? '设置日期' : '延期'),
+                    ),
+                  if (event != null && event!.status == EventStatus.scheduled)
+                    const PopupMenuItem(value: 'start', child: Text('开始')),
+                  if (event != null && event!.status == EventStatus.active)
+                    const PopupMenuItem(value: 'complete', child: Text('结束')),
+                  if (event != null &&
+                      (event!.status == EventStatus.scheduled ||
+                          event!.status == EventStatus.active))
+                    const PopupMenuItem(value: 'cancel', child: Text('取消事件')),
+                  if (person != null)
+                    const PopupMenuItem(value: 'delete', child: Text('删除')),
+                  if (event != null)
+                    const PopupMenuItem(
+                      value: 'permanent-delete',
+                      child: Text('永久删除'),
+                    ),
                 ],
               ),
             ],
@@ -1312,24 +1696,52 @@ class ArchiveDetail extends StatelessWidget {
             ),
           const SizedBox(height: 24),
           if (event != null) ...[
+            Chip(
+              backgroundColor: _eventStatusColor(event!.status),
+              label: Text(
+                event!.status.label,
+                style: TextStyle(color: _eventStatusTextColor(event!.status)),
+              ),
+            ),
+            const SizedBox(height: 12),
             DetailSection(
               title: '事件信息',
-              values: {
-                '时间': event!.dateLabel,
-                '地点': event!.place,
-                '来源': event!.sources.join('；'),
-              },
+              values: {'时间': event!.dateLabel, '地点': event!.place},
             ),
             const SizedBox(height: 20),
             Text('关联人物', style: Theme.of(context).textTheme.titleMedium),
             ..._orderedPeople(event!.people).map(
               (link) => ListTile(
                 contentPadding: EdgeInsets.zero,
+                mouseCursor: SystemMouseCursors.click,
+                hoverColor: AtlasPalette.interactiveHover,
+                splashColor: AtlasPalette.interactiveSplash,
                 onTap: () => onPerson(link.personId),
                 title: Text(names[link.personId]?.name ?? '未知人物'),
                 trailing: Text(link.role.label),
               ),
             ),
+            if (event!.previousEventIds.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text('前序事件', style: Theme.of(context).textTheme.titleMedium),
+              ...event!.previousEventIds.map((id) {
+                final previous = archive.events
+                    .where((item) => item.id == id)
+                    .firstOrNull;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  mouseCursor: previous == null
+                      ? SystemMouseCursors.basic
+                      : SystemMouseCursors.click,
+                  hoverColor: AtlasPalette.interactiveHover,
+                  splashColor: AtlasPalette.interactiveSplash,
+                  onTap: previous == null ? null : () => onEvent(id),
+                  title: Text(previous?.title ?? '未知事件'),
+                  subtitle: Text(previous?.dateLabel ?? '关联资料缺失'),
+                  trailing: const Icon(Icons.chevron_right),
+                );
+              }),
+            ],
           ],
           if (person != null) ...[
             DetailSection(
@@ -1345,6 +1757,9 @@ class ArchiveDetail extends StatelessWidget {
             ...related.map(
               (item) => ListTile(
                 contentPadding: EdgeInsets.zero,
+                mouseCursor: SystemMouseCursors.click,
+                hoverColor: AtlasPalette.interactiveHover,
+                splashColor: AtlasPalette.interactiveSplash,
                 onTap: () => onEvent(item.id),
                 title: Text(item.title),
                 subtitle: Text(item.dateLabel),
@@ -1440,9 +1855,189 @@ class ImportPreviewDialog extends StatelessWidget {
   );
 }
 
+class CustomTagsPage extends StatefulWidget {
+  const CustomTagsPage({
+    super.key,
+    required this.customTags,
+    required this.eventCounts,
+    required this.onChanged,
+    required this.onDelete,
+  });
+
+  final List<String> customTags;
+  final Map<String, int> eventCounts;
+  final Future<void> Function(List<String>) onChanged;
+  final Future<void> Function(String) onDelete;
+
+  @override
+  State<CustomTagsPage> createState() => _CustomTagsPageState();
+}
+
+class _CustomTagsPageState extends State<CustomTagsPage> {
+  final _controller = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _add() async {
+    final tag = _controller.text.trim();
+    if (tag.isEmpty) return;
+    final tags = {...widget.customTags, tag}.toList()..sort();
+    await _save(tags);
+    if (mounted) _controller.clear();
+  }
+
+  Future<void> _remove(String tag) async {
+    if (_saving) return;
+    final eventCount = widget.eventCounts[tag] ?? 0;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('删除标签'),
+        content: Text('「#$tag」关联 $eventCount 个事件，删除后会同时从事件和人物中移除。是否继续？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onDelete(tag);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _save(List<String> tags) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onChanged(tags);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
+    children: [
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 960),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('自定义标签', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 6),
+            const Text(
+              '在这里维护所有可复用的自定义标签，事件和人物编辑时直接选择。',
+              style: TextStyle(color: AtlasPalette.muted),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    enabled: !_saving,
+                    onSubmitted: (_) => _add(),
+                    decoration: const InputDecoration(
+                      labelText: '新标签',
+                      hintText: '例如：厦门、长期项目',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                FilledButton.icon(
+                  onPressed: _saving ? null : _add,
+                  icon: const Icon(Icons.add),
+                  label: const Text('添加'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 28),
+            Text('我的标签', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 10),
+            if (widget.customTags.isEmpty)
+              const Text(
+                '还没有自定义标签。',
+                style: TextStyle(color: AtlasPalette.muted),
+              )
+            else
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: widget.customTags
+                    .map(
+                      (tag) => SizedBox(
+                        width: 260,
+                        child: Card(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '#$tag',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w700,
+                                          color: AtlasPalette.green,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '关联 ${widget.eventCounts[tag] ?? 0} 个事件',
+                                        style: const TextStyle(
+                                          color: AtlasPalette.muted,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: '删除标签',
+                                  onPressed: _saving
+                                      ? null
+                                      : () => _remove(tag),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
 class PersonEditor extends StatefulWidget {
-  const PersonEditor({super.key, this.initial});
+  const PersonEditor({super.key, this.initial, this.customTags = const []});
   final Person? initial;
+  final List<String> customTags;
   @override
   State<PersonEditor> createState() => _PersonEditorState();
 }
@@ -1485,9 +2080,26 @@ class _PersonEditorState extends State<PersonEditor> {
           decoration: const InputDecoration(labelText: '简介'),
         ),
         const SizedBox(height: 28),
-        TextField(
-          controller: _tags,
-          decoration: const InputDecoration(labelText: '标签', hintText: '建筑，访谈'),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text('标签', style: Theme.of(context).textTheme.labelLarge),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: _availableTags
+                .map(
+                  (tag) => FilterChip(
+                    label: Text(tag),
+                    selected: _split(_tags.text).contains(tag),
+                    onSelected: (selected) => _toggleTag(tag, selected),
+                  ),
+                )
+                .toList(),
+          ),
         ),
         const SizedBox(height: 28),
         TextField(
@@ -1510,6 +2122,22 @@ class _PersonEditorState extends State<PersonEditor> {
       FilledButton(onPressed: _save, child: const Text('保存')),
     ],
   );
+
+  List<String> get _availableTags {
+    final tags = {...widget.customTags, ..._split(_tags.text)}.toList()..sort();
+    return tags;
+  }
+
+  void _toggleTag(String tag, bool selected) {
+    final tags = _split(_tags.text).toSet();
+    if (selected) {
+      tags.add(tag);
+    } else {
+      tags.remove(tag);
+    }
+    setState(() => _tags.text = tags.join('，'));
+  }
+
   void _save() {
     final name = _name.text.trim();
     if (name.isEmpty) return;
@@ -1531,57 +2159,112 @@ class _PersonEditorState extends State<PersonEditor> {
 }
 
 class EventEditor extends StatefulWidget {
-  const EventEditor({super.key, this.initial, required this.people});
+  const EventEditor({
+    super.key,
+    this.initial,
+    required this.people,
+    this.events = const [],
+    this.customTags = const [],
+  });
   final EventItem? initial;
   final List<Person> people;
+  final List<EventItem> events;
+  final List<String> customTags;
   @override
   State<EventEditor> createState() => _EventEditorState();
 }
 
 class _EventEditorState extends State<EventEditor> {
+  late final _id =
+      widget.initial?.id ?? 'e-${DateTime.now().microsecondsSinceEpoch}';
+  late final _createdAt = widget.initial?.createdAt ?? DateTime.now();
   late final _title = TextEditingController(text: widget.initial?.title);
   late final _start = TextEditingController(text: widget.initial?.start);
   late final _end = TextEditingController(text: widget.initial?.end);
-  late final _place = TextEditingController(text: widget.initial?.place);
+  late final _initialLocation = EventLocation.fromStored(
+    widget.initial?.place ?? '',
+    chinaRegions: chinaRegions,
+  );
+  late String? _country = _initialLocation.country;
+  late String? _province = _initialLocation.province;
+  late String? _city = _initialLocation.city;
+  late String? _district = _initialLocation.district;
+  late final _placeDetail = TextEditingController(
+    text: _initialLocation.detail,
+  );
   late final _description = TextEditingController(
     text: widget.initial?.description,
   );
   late final _tags = TextEditingController(
     text: widget.initial?.tags.join('，'),
   );
-  late final _sources = TextEditingController(
-    text: widget.initial?.sources.join('，'),
-  );
   late Precision _precision = widget.initial?.precision ?? Precision.day;
+  late EventStatus _status = widget.initial?.status ?? EventStatus.scheduled;
   late final List<PersonLink> _links =
       widget.initial?.people.toList() ??
       [PersonLink(personId: widget.people.first.id, role: Role.participant)];
+  late final Set<String> _previousEventIds =
+      widget.initial?.previousEventIds.toSet() ?? <String>{};
+  late final _previousQuery = TextEditingController();
+
   @override
   void dispose() {
     _title.dispose();
     _start.dispose();
     _end.dispose();
-    _place.dispose();
+    _placeDetail.dispose();
     _description.dispose();
     _tags.dispose();
-    _sources.dispose();
+    _previousQuery.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => _EditorDialog(
     title: Text(widget.initial == null ? '新增事件' : '编辑事件'),
-    contentWidth: 520,
+    contentWidth: 900,
     content: SizedBox(
-      width: 520,
+      width: double.infinity,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          TextField(
-            controller: _title,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: '事件标题 *'),
+          _sectionTitle('基本信息'),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _title,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: '事件标题 *'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 132,
+                child: DropdownButtonFormField<EventStatus>(
+                  initialValue: _status,
+                  decoration: const InputDecoration(labelText: '状态'),
+                  borderRadius: const BorderRadius.all(Radius.circular(12)),
+                  dropdownColor: AtlasPalette.card,
+                  items: EventStatus.values
+                      .map(
+                        (status) => DropdownMenuItem(
+                          value: status,
+                          child: Text(status.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) => setState(() {
+                    _status = value!;
+                    if (_status == EventStatus.scheduled) {
+                      _precision = Precision.day;
+                      _end.clear();
+                    }
+                  }),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Row(
@@ -1589,20 +2272,26 @@ class _EventEditorState extends State<EventEditor> {
               SizedBox(
                 width: 120,
                 child: DropdownButtonFormField<Precision>(
-                  value: _precision,
+                  initialValue: _precision,
                   isDense: true,
                   decoration: const InputDecoration(labelText: '时间精度'),
                   borderRadius: const BorderRadius.all(Radius.circular(12)),
                   dropdownColor: AtlasPalette.card,
                   elevation: 6,
-                  items: Precision.values
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label, style: const TextStyle(fontSize: 13)),
-                        ),
-                      )
-                      .toList(),
+                  items:
+                      (_status == EventStatus.scheduled
+                              ? const [Precision.day]
+                              : Precision.values)
+                          .map(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(
+                                value.label,
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ),
+                          )
+                          .toList(),
                   onChanged: (value) => setState(() => _precision = value!),
                 ),
               ),
@@ -1613,9 +2302,25 @@ class _EventEditorState extends State<EventEditor> {
                   readOnly: true,
                   onTap: () => _pickDate(_start),
                   decoration: InputDecoration(
-                    labelText: _precision == Precision.range ? '开始时间 *' : '时间 *',
-                    hintText: '点击选择',
-                    suffixIcon: const Icon(Icons.calendar_today, size: 18),
+                    labelText: _precision == Precision.range
+                        ? '开始时间 *'
+                        : _status == EventStatus.scheduled
+                        ? '预定日期'
+                        : _status == EventStatus.cancelled
+                        ? '时间（可选）'
+                        : '时间 *',
+                    hintText: _status == EventStatus.scheduled
+                        ? '点击选择（可留空）'
+                        : '点击选择',
+                    suffixIcon:
+                        _status == EventStatus.scheduled &&
+                            _start.text.isNotEmpty
+                        ? IconButton(
+                            onPressed: () => setState(_start.clear),
+                            icon: const Icon(Icons.clear),
+                            tooltip: '清空日期',
+                          )
+                        : const Icon(Icons.calendar_today, size: 18),
                   ),
                 ),
               ),
@@ -1635,11 +2340,9 @@ class _EventEditorState extends State<EventEditor> {
             ),
             const SizedBox(height: 8),
           ],
-          TextField(
-            controller: _place,
-            decoration: const InputDecoration(labelText: '地点'),
-          ),
-          const SizedBox(height: 8),
+          _sectionTitle('地点'),
+          ..._locationFields(chinaRegions),
+          _sectionTitle('内容'),
           TextField(
             controller: _description,
             maxLines: 3,
@@ -1648,8 +2351,7 @@ class _EventEditorState extends State<EventEditor> {
               hintText: '发生了什么',
             ),
           ),
-          const Padding(padding: EdgeInsets.only(top: 16), child: Divider()),
-          const SizedBox(height: 4),
+          _sectionTitle('关联'),
           Row(
             children: [
               const Text('关联人物 *'),
@@ -1662,29 +2364,73 @@ class _EventEditorState extends State<EventEditor> {
             ],
           ),
           ...List.generate(_links.length, _linkEditor),
-          Theme(
-            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: const Text('更多', style: TextStyle(fontSize: 13)),
-              collapsedShape: const Border(),
-              shape: const Border(),
-              childrenPadding: const EdgeInsets.only(bottom: 8),
+          if (_eligiblePreviousEvents.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Row(
               children: [
-                TextField(
-                  controller: _tags,
-                  decoration: const InputDecoration(
-                    labelText: '标签',
-                    hintText: '用逗号分隔',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _sources,
-                  decoration: const InputDecoration(labelText: '来源'),
+                const Text('前序事件'),
+                const SizedBox(width: 8),
+                Text(
+                  '已选 ${_previousEventIds.length}',
+                  style: TextStyle(color: AtlasPalette.muted, fontSize: 12),
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _previousQuery,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                labelText: '搜索前序事件',
+                suffixIcon: _previousQuery.text.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () => setState(_previousQuery.clear),
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            ..._filteredPreviousEvents.map(
+              (event) => CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                mouseCursor: SystemMouseCursors.click,
+                hoverColor: AtlasPalette.interactiveHover,
+                value: _previousEventIds.contains(event.id),
+                title: Text(event.title),
+                subtitle: Text(event.dateLabel),
+                onChanged: (selected) => setState(() {
+                  if (selected == true) {
+                    _previousEventIds.add(event.id);
+                  } else {
+                    _previousEventIds.remove(event.id);
+                  }
+                }),
+              ),
+            ),
+            if (_filteredPreviousEvents.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('没有匹配的前序事件'),
+              ),
+          ],
+          _sectionTitle('标签'),
+          const Text('选择标签'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: _availableTags
+                .map(
+                  (tag) => FilterChip(
+                    label: Text(tag),
+                    selected: _split(_tags.text).contains(tag),
+                    onSelected: (selected) => _toggleTag(tag, selected),
+                  ),
+                )
+                .toList(),
           ),
         ],
       ),
@@ -1697,6 +2443,179 @@ class _EventEditorState extends State<EventEditor> {
       FilledButton(onPressed: _save, child: const Text('保存')),
     ],
   );
+
+  Widget _sectionTitle(String title) => Padding(
+    padding: const EdgeInsets.only(top: 16, bottom: 8),
+    child: Row(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: AtlasPalette.green,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 10),
+        const Expanded(child: Divider(height: 1)),
+      ],
+    ),
+  );
+
+  List<EventItem> get _eligiblePreviousEvents =>
+      widget.events
+          .where(
+            (event) =>
+                event.id != _id &&
+                (event.createdAt.isBefore(_createdAt) ||
+                    (event.createdAt.isAtSameMomentAs(_createdAt) &&
+                        event.id.compareTo(_id) < 0)),
+          )
+          .toList()
+        ..sort((left, right) {
+          final created = left.createdAt.compareTo(right.createdAt);
+          return created == 0 ? left.id.compareTo(right.id) : created;
+        });
+
+  List<EventItem> get _filteredPreviousEvents {
+    final query = _previousQuery.text.trim().toLowerCase();
+    if (query.isEmpty) return _eligiblePreviousEvents;
+    return _eligiblePreviousEvents.where((event) {
+      final content = [
+        event.title,
+        event.dateLabel,
+        event.place,
+        event.description,
+        ...event.tags,
+      ].join(' ').toLowerCase();
+      return content.contains(query);
+    }).toList();
+  }
+
+  List<String> get _availableTags {
+    final tags = {
+      ...widget.customTags,
+      ...widget.events.expand((event) => event.tags),
+      ..._split(_tags.text),
+    }.toList()..sort();
+    return tags;
+  }
+
+  void _toggleTag(String tag, bool selected) {
+    final tags = _split(_tags.text).toSet();
+    if (selected) {
+      tags.add(tag);
+    } else {
+      tags.remove(tag);
+    }
+    setState(() => _tags.text = tags.join('，'));
+  }
+
+  List<Widget> _locationFields(ChinaRegions regions) {
+    final cities = _province == null
+        ? const <String>[]
+        : regions.citiesFor(_province!);
+    final districts = _province == null || _city == null
+        ? const <String>[]
+        : regions.districtsFor(_province!, _city!);
+    return [
+      DropdownButtonFormField<String>(
+        key: ValueKey('country-$_country'),
+        initialValue: _country,
+        isExpanded: true,
+        decoration: const InputDecoration(labelText: '国家/地区 *'),
+        hint: const Text('请选择'),
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        dropdownColor: AtlasPalette.card,
+        elevation: 6,
+        items: eventLocationCountries
+            .map(
+              (country) =>
+                  DropdownMenuItem(value: country, child: Text(country)),
+            )
+            .toList(),
+        onChanged: (value) => setState(() {
+          _country = value;
+          _province = null;
+          _city = null;
+          _district = null;
+        }),
+      ),
+      const SizedBox(height: 8),
+      if (_country == '中国') ...[
+        DropdownButtonFormField<String>(
+          key: ValueKey('province-$_province'),
+          initialValue: _province,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: '省级地区 *'),
+          hint: const Text('请选择'),
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          dropdownColor: AtlasPalette.card,
+          elevation: 6,
+          items: regions.provinces
+              .map(
+                (province) =>
+                    DropdownMenuItem(value: province, child: Text(province)),
+              )
+              .toList(),
+          onChanged: (value) => setState(() {
+            _province = value;
+            _city = null;
+            _district = null;
+          }),
+        ),
+        const SizedBox(height: 8),
+        if (_province != null && cities.isNotEmpty) ...[
+          DropdownButtonFormField<String>(
+            key: ValueKey('city-$_city'),
+            initialValue: _city,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: '城市 *'),
+            hint: const Text('请选择'),
+            borderRadius: const BorderRadius.all(Radius.circular(12)),
+            dropdownColor: AtlasPalette.card,
+            elevation: 6,
+            items: cities
+                .map((city) => DropdownMenuItem(value: city, child: Text(city)))
+                .toList(),
+            onChanged: (value) => setState(() {
+              _city = value;
+              _district = null;
+            }),
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (_city != null && districts.isNotEmpty) ...[
+          DropdownButtonFormField<String>(
+            key: ValueKey('district-$_district'),
+            initialValue: _district,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: '区/县 *'),
+            hint: const Text('请选择'),
+            borderRadius: const BorderRadius.all(Radius.circular(12)),
+            dropdownColor: AtlasPalette.card,
+            elevation: 6,
+            items: districts
+                .map(
+                  (district) =>
+                      DropdownMenuItem(value: district, child: Text(district)),
+                )
+                .toList(),
+            onChanged: (value) => setState(() => _district = value),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+      TextField(
+        controller: _placeDetail,
+        decoration: const InputDecoration(
+          labelText: '详细地点（可选）',
+          hintText: '街道、社区或场所',
+        ),
+      ),
+    ];
+  }
+
   Widget _linkEditor(int index) {
     final link = _links[index];
     return Padding(
@@ -1705,7 +2624,7 @@ class _EventEditorState extends State<EventEditor> {
         children: [
           Expanded(
             child: DropdownButtonFormField<String>(
-              value: link.personId,
+              initialValue: link.personId,
               borderRadius: const BorderRadius.all(Radius.circular(12)),
               dropdownColor: AtlasPalette.card,
               elevation: 6,
@@ -1728,7 +2647,7 @@ class _EventEditorState extends State<EventEditor> {
           const SizedBox(width: 8),
           Expanded(
             child: DropdownButtonFormField<Role>(
-              value: link.role,
+              initialValue: link.role,
               borderRadius: const BorderRadius.all(Radius.circular(12)),
               dropdownColor: AtlasPalette.card,
               elevation: 6,
@@ -1810,10 +2729,39 @@ class _EventEditorState extends State<EventEditor> {
     final title = _title.text.trim();
     final start = _start.text.trim();
     final end = _precision == Precision.range ? _end.text.trim() : null;
-    if (title.isEmpty || start.isEmpty || _links.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请填写标题、时间，并关联至少一位人物。')),
-      );
+    final location = EventLocation(
+      country: _country,
+      province: _province,
+      city: _city,
+      district: _district,
+      detail: _placeDetail.text,
+    );
+    if (title.isEmpty || _links.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写标题，并关联至少一位人物。')));
+      return;
+    }
+    if (_status != EventStatus.scheduled &&
+        _status != EventStatus.cancelled &&
+        start.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('进行中或已结束事件必须填写时间。')));
+      return;
+    }
+    if (_status == EventStatus.scheduled &&
+        start.isNotEmpty &&
+        _parseLocalDate(start) == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('预定日期必须精确到日。')));
+      return;
+    }
+    if (location.validationMessage(chinaRegions) case final message?) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
       return;
     }
     if (_precision == Precision.range &&
@@ -1829,18 +2777,22 @@ class _EventEditorState extends State<EventEditor> {
     Navigator.pop(
       context,
       EventItem(
-        id: widget.initial?.id ?? 'e-${now.microsecondsSinceEpoch}',
+        id: _id,
         title: title,
-        precision: _precision,
+        precision: _status == EventStatus.scheduled
+            ? Precision.day
+            : _precision,
         start: start,
-        end: end,
-        place: _place.text.trim(),
+        end: _status == EventStatus.scheduled ? null : end,
+        place: location.value,
         description: _description.text.trim(),
         tags: _split(_tags.text),
-        sources: _split(_sources.text),
+        sources: widget.initial?.sources ?? const [],
         people: _links,
-        createdAt: widget.initial?.createdAt ?? now,
+        createdAt: _createdAt,
         updatedAt: now,
+        status: _status,
+        previousEventIds: _previousEventIds.toList()..sort(),
       ),
     );
   }

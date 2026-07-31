@@ -4,6 +4,8 @@ enum Precision { year, month, day, range }
 
 enum Role { organizer, participant }
 
+enum EventStatus { scheduled, active, completed, cancelled }
+
 enum EntityType { person, event }
 
 enum RevisionAction { create, update }
@@ -21,6 +23,15 @@ extension RoleLabel on Role {
   String get label => switch (this) {
     Role.organizer => '组织者',
     Role.participant => '参与者',
+  };
+}
+
+extension EventStatusLabel on EventStatus {
+  String get label => switch (this) {
+    EventStatus.scheduled => '预定',
+    EventStatus.active => '进行中',
+    EventStatus.completed => '已结束',
+    EventStatus.cancelled => '已取消',
   };
 }
 
@@ -110,8 +121,12 @@ class PersonLink {
 
 Role _roleFromJson(String value) => switch (value) {
   '组织者' || 'organizer' || '当事人' || 'subject' => Role.organizer,
-  '参与者' || 'participant' || '见证人' || 'witness' || '提及者' || 'mentioned' =>
-    Role.participant,
+  '参与者' ||
+  'participant' ||
+  '见证人' ||
+  'witness' ||
+  '提及者' ||
+  'mentioned' => Role.participant,
   _ => throw FormatException('不支持的人物角色：$value'),
 };
 
@@ -129,6 +144,8 @@ class EventItem {
     required this.people,
     required this.createdAt,
     required this.updatedAt,
+    this.status = EventStatus.completed,
+    this.previousEventIds = const [],
   });
 
   final String id;
@@ -143,13 +160,47 @@ class EventItem {
   final List<PersonLink> people;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final EventStatus status;
+  final List<String> previousEventIds;
 
   String get dateLabel {
+    if (start.isEmpty) return '待定';
     String format(String value) => value.replaceAll('-', '.');
     return precision == Precision.range
         ? '${format(start)} — ${end == null || end!.isEmpty ? '至今' : format(end!)}'
         : format(start);
   }
+
+  EventItem copyWith({
+    String? title,
+    Precision? precision,
+    String? start,
+    String? end,
+    bool clearEnd = false,
+    String? place,
+    String? description,
+    List<String>? tags,
+    List<String>? sources,
+    List<PersonLink>? people,
+    DateTime? updatedAt,
+    EventStatus? status,
+    List<String>? previousEventIds,
+  }) => EventItem(
+    id: id,
+    title: title ?? this.title,
+    precision: precision ?? this.precision,
+    start: start ?? this.start,
+    end: clearEnd ? null : end ?? this.end,
+    place: place ?? this.place,
+    description: description ?? this.description,
+    tags: tags ?? this.tags,
+    sources: sources ?? this.sources,
+    people: people ?? this.people,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    status: status ?? this.status,
+    previousEventIds: previousEventIds ?? this.previousEventIds,
+  );
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -164,6 +215,8 @@ class EventItem {
     'people': people.map((link) => link.toJson()).toList(),
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
+    'status': status.name,
+    'previousEventIds': previousEventIds,
   };
 
   factory EventItem.fromJson(Map<String, dynamic> json) => EventItem(
@@ -183,8 +236,18 @@ class EventItem {
         .toList(),
     createdAt: DateTime.parse(json['createdAt'] as String),
     updatedAt: DateTime.parse(json['updatedAt'] as String),
+    status: _eventStatusFromJson(json['status'] as String? ?? 'completed'),
+    previousEventIds: (json['previousEventIds'] as List? ?? []).cast<String>(),
   );
 }
+
+EventStatus _eventStatusFromJson(String value) => switch (value) {
+  '预定' || 'scheduled' => EventStatus.scheduled,
+  '进行中' || 'active' => EventStatus.active,
+  '已结束' || 'completed' => EventStatus.completed,
+  '已取消' || 'cancelled' || 'canceled' => EventStatus.cancelled,
+  _ => throw FormatException('不支持的事件状态：$value'),
+};
 
 class ArchiveChange {
   const ArchiveChange({
@@ -267,27 +330,32 @@ class Archive {
   const Archive({
     required this.people,
     required this.events,
+    this.customTags = const [],
     this.revisions = const [],
   });
 
   final List<Person> people;
   final List<EventItem> events;
+  final List<String> customTags;
   final List<Revision> revisions;
 
   Archive copyWith({
     List<Person>? people,
     List<EventItem>? events,
+    List<String>? customTags,
     List<Revision>? revisions,
   }) => Archive(
     people: people ?? this.people,
     events: events ?? this.events,
+    customTags: customTags ?? this.customTags,
     revisions: revisions ?? this.revisions,
   );
 
   Map<String, dynamic> toJson() => {
-    'version': 1,
+    'version': 2,
     'people': people.map((person) => person.toJson()).toList(),
     'events': events.map((event) => event.toJson()).toList(),
+    'customTags': customTags,
     'revisions': revisions.map((revision) => revision.toJson()).toList(),
   };
 
@@ -295,7 +363,9 @@ class Archive {
 
   factory Archive.decode(String source) {
     final json = Map<String, dynamic>.from(jsonDecode(source) as Map);
-    if (json['version'] != 1) throw const FormatException('不支持的档案版本。');
+    if (json['version'] != 1 && json['version'] != 2) {
+      throw const FormatException('不支持的档案版本。');
+    }
     return Archive(
       people: (json['people'] as List)
           .map(
@@ -308,6 +378,7 @@ class Archive {
                 EventItem.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(),
+      customTags: (json['customTags'] as List? ?? []).cast<String>(),
       revisions: (json['revisions'] as List? ?? [])
           .map(
             (item) => Revision.fromJson(Map<String, dynamic>.from(item as Map)),
