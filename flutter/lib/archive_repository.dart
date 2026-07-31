@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:sqlite3_flutter_libs/sqlite3_flutter_libs.dart';
 
+import 'app_settings.dart';
 import 'archive.dart';
 
 class ImportPreview {
@@ -103,6 +104,31 @@ class ArchiveRepository {
       revisions: revisions,
     );
   }
+
+  Future<AppSettings> loadSettings() async {
+    final database = await _open();
+    final rows = database.select(
+      "SELECT value FROM metadata WHERE key = 'app_settings'",
+    );
+    if (rows.isEmpty) return AppSettings.defaults;
+    try {
+      return AppSettings.fromJson(jsonDecode(rows.single['value'] as String));
+    } catch (_) {
+      return AppSettings.defaults;
+    }
+  }
+
+  Future<void> saveSettings(AppSettings settings) => _serialize(() async {
+    final database = await _open();
+    _transaction(
+      database,
+      () => database.execute(
+        "INSERT INTO metadata (key, value) VALUES ('app_settings', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [settings.encode()],
+      ),
+    );
+  });
 
   Future<ImportPreview> preview(Archive imported) async {
     final current = await load();

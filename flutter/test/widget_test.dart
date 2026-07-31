@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:person_event_atlas/app_settings.dart';
 import 'package:person_event_atlas/archive.dart';
 import 'package:person_event_atlas/archive_repository.dart';
 import 'package:person_event_atlas/main.dart';
@@ -16,6 +17,106 @@ void main() {
     expect(find.byType(NavigationRail), findsOneWidget);
     expect(find.text('事件时间线'), findsOneWidget);
     expect(find.text('标签管理'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
+  });
+
+  testWidgets('opens settings with data management and theme controls', (
+    tester,
+  ) async {
+    final repository = ArchiveRepository(databasePath: ':memory:');
+    addTearDown(repository.close);
+
+    await tester.binding.setSurfaceSize(const Size(1100, 800));
+    await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('应用偏好'), findsOneWidget);
+    expect(find.text('导入 JSON'), findsOneWidget);
+    expect(find.text('导出 JSON'), findsOneWidget);
+    expect(find.text('跟随系统'), findsOneWidget);
+    expect(find.text('森林绿'), findsOneWidget);
+
+    await tester.tap(find.text('深色'));
+    await tester.pumpAndSettle();
+
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.themeMode, ThemeMode.dark);
+    expect(app.darkTheme?.colorScheme.primary, const Color(0xff55c596));
+  });
+
+  testWidgets('changes the new event precision preference', (tester) async {
+    AppSettings? changed;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            settings: AppSettings.defaults,
+            onChanged: (settings) async => changed = settings,
+            onImport: () async {},
+            onExport: () async {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(DropdownButtonFormField<Precision>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('月份').last);
+    await tester.pumpAndSettle();
+
+    expect(changed?.defaultPrecision, Precision.month);
+  });
+
+  testWidgets('applies precision preference only to new event editors', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EventEditor(
+            people: seedArchive.people,
+            defaultPrecision: Precision.month,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<DropdownButtonFormField<Precision>>(
+            find.byType(DropdownButtonFormField<Precision>),
+          )
+          .initialValue,
+      Precision.month,
+    );
+
+    final existing = seedArchive.events.first;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EventEditor(
+            key: const ValueKey('existing-event'),
+            initial: existing,
+            people: seedArchive.people,
+            defaultPrecision: Precision.range,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<DropdownButtonFormField<Precision>>(
+            find.byType(DropdownButtonFormField<Precision>),
+          )
+          .initialValue,
+      existing.precision,
+    );
   });
 
   testWidgets('adds a custom tag from the tag page', (tester) async {

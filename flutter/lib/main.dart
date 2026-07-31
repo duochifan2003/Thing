@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'app_settings.dart';
 import 'archive.dart';
 import 'archive_repository.dart';
 import 'event_location.dart';
@@ -166,10 +167,46 @@ Future<void> main() async {
   runApp(const PersonEventAtlasApp());
 }
 
-class PersonEventAtlasApp extends StatelessWidget {
+class PersonEventAtlasApp extends StatefulWidget {
   const PersonEventAtlasApp({super.key, this.repository});
 
   final ArchiveRepository? repository;
+
+  @override
+  State<PersonEventAtlasApp> createState() => _PersonEventAtlasAppState();
+}
+
+class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
+  late final ArchiveRepository _repository =
+      widget.repository ?? ArchiveRepository();
+  AppSettings _settings = AppSettings.defaults;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      _settings = await _repository.loadSettings();
+    } catch (_) {
+      _settings = AppSettings.defaults;
+    }
+    if (mounted) setState(() => _ready = true);
+  }
+
+  Future<void> _saveSettings(AppSettings next) async {
+    final previous = _settings;
+    setState(() => _settings = next);
+    try {
+      await _repository.saveSettings(next);
+    } catch (_) {
+      if (mounted) setState(() => _settings = previous);
+      rethrow;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -183,105 +220,167 @@ class PersonEventAtlasApp extends StatelessWidget {
       ],
       supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
       locale: const Locale('zh', 'CN'),
-      theme: ThemeData(
-        brightness: Brightness.light,
-        useMaterial3: true,
-        scaffoldBackgroundColor: AtlasPalette.paper,
-        colorScheme: const ColorScheme.light(
-          primary: AtlasPalette.green,
-          secondary: AtlasPalette.accent,
-          surface: AtlasPalette.card,
-          onSurface: AtlasPalette.ink,
-          outline: AtlasPalette.line,
-        ),
-        cardTheme: const CardThemeData(
-          color: AtlasPalette.card,
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(12)),
-            side: BorderSide(color: AtlasPalette.line),
-          ),
-        ),
-        inputDecorationTheme: const InputDecorationTheme(
-          filled: true,
-          fillColor: AtlasPalette.card,
-          contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(10)),
-            borderSide: BorderSide(color: AtlasPalette.line),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(10)),
-            borderSide: BorderSide(color: AtlasPalette.line),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(10)),
-            borderSide: BorderSide(color: AtlasPalette.green, width: 1.5),
-          ),
-        ),
-        navigationRailTheme: const NavigationRailThemeData(
-          backgroundColor: AtlasPalette.sidebar,
-          selectedIconTheme: IconThemeData(color: AtlasPalette.green),
-          selectedLabelTextStyle: TextStyle(
-            color: AtlasPalette.green,
-            fontWeight: FontWeight.w700,
-          ),
-          indicatorColor: AtlasPalette.navigationSelected,
-          indicatorShape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(12)),
-          ),
-          useIndicator: true,
-          unselectedIconTheme: IconThemeData(color: Color(0xff536159)),
-          unselectedLabelTextStyle: TextStyle(color: Color(0xff536159)),
-        ),
-        navigationBarTheme: const NavigationBarThemeData(
-          backgroundColor: AtlasPalette.sidebar,
-          surfaceTintColor: Colors.transparent,
-          indicatorColor: AtlasPalette.navigationSelected,
-          overlayColor: WidgetStatePropertyAll<Color?>(
-            AtlasPalette.interactiveHover,
-          ),
-        ),
-        chipTheme: const ChipThemeData(
-          backgroundColor: Color(0xffedf3ea),
-          side: BorderSide.none,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(5)),
-          ),
-          labelStyle: TextStyle(color: Color(0xff41614f), fontSize: 11),
-          padding: EdgeInsets.symmetric(horizontal: 4),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            backgroundColor: AtlasPalette.green,
-            foregroundColor: Colors.white,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.all(Radius.circular(8)),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AtlasPalette.green,
-            side: const BorderSide(color: AtlasPalette.green),
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.all(Radius.circular(8)),
-            ),
-          ),
-        ),
-        textTheme: ThemeData.light().textTheme.apply(
-          bodyColor: AtlasPalette.ink,
-          displayColor: AtlasPalette.ink,
-        ),
-      ),
-      home: ArchiveHome(repository: repository),
+      theme: _atlasTheme(_settings.primaryColor, Brightness.light),
+      darkTheme: _atlasTheme(_settings.primaryColor, Brightness.dark),
+      themeMode: switch (_settings.themeMode) {
+        AppThemeMode.system => ThemeMode.system,
+        AppThemeMode.light => ThemeMode.light,
+        AppThemeMode.dark => ThemeMode.dark,
+      },
+      home: _ready
+          ? ArchiveHome(
+              repository: _repository,
+              settings: _settings,
+              onSettingsChanged: _saveSettings,
+            )
+          : const Scaffold(body: Center(child: Text('正在打开本地档案…'))),
     );
   }
 }
 
-enum ArchiveView { timeline, people, tags }
+ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
+  final dark = brightness == Brightness.dark;
+  final paper = dark ? const Color(0xff0f1012) : AtlasPalette.paper;
+  final sidebar = dark ? const Color(0xff17191c) : AtlasPalette.sidebar;
+  final card = dark ? const Color(0xff222529) : AtlasPalette.card;
+  final ink = dark ? const Color(0xfff2f2f3) : AtlasPalette.ink;
+  final muted = dark ? const Color(0xffa6a9ae) : AtlasPalette.muted;
+  final line = dark ? const Color(0xff3b3e43) : AtlasPalette.line;
+  final primary = dark
+      ? switch (primaryColor) {
+          AppPrimaryColor.forestGreen => const Color(0xff55c596),
+          AppPrimaryColor.terracotta => const Color(0xffff9a7b),
+          AppPrimaryColor.oceanBlue => const Color(0xff79b8e6),
+        }
+      : Color(primaryColor.value);
+  final onPrimary = dark ? const Color(0xff07140d) : Colors.white;
+  final scheme = (dark ? ColorScheme.dark : ColorScheme.light)(
+    primary: primary,
+    secondary: AtlasPalette.accent,
+    surface: card,
+    onSurface: ink,
+    outline: line,
+  );
+  return ThemeData(
+    brightness: brightness,
+    useMaterial3: true,
+    scaffoldBackgroundColor: paper,
+    colorScheme: scheme,
+    cardTheme: CardThemeData(
+      color: card,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.all(Radius.circular(16)),
+        side: BorderSide(color: line),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: card,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        borderSide: BorderSide(color: line),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        borderSide: BorderSide(color: line),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        borderSide: BorderSide(color: primary, width: 1.5),
+      ),
+    ),
+    navigationRailTheme: NavigationRailThemeData(
+      backgroundColor: sidebar,
+      selectedIconTheme: IconThemeData(color: primary),
+      selectedLabelTextStyle: TextStyle(
+        color: primary,
+        fontWeight: FontWeight.w700,
+      ),
+      indicatorColor: primary.withAlpha(dark ? 0x66 : 0x26),
+      indicatorShape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+      ),
+      useIndicator: true,
+      unselectedIconTheme: IconThemeData(color: muted),
+      unselectedLabelTextStyle: TextStyle(color: muted),
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: sidebar,
+      surfaceTintColor: Colors.transparent,
+      indicatorColor: primary.withAlpha(dark ? 0x66 : 0x26),
+      indicatorShape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+      ),
+      overlayColor: WidgetStatePropertyAll<Color?>(primary.withAlpha(0x1f)),
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: dark ? const Color(0xff2c2f34) : const Color(0xffedf3ea),
+      side: BorderSide.none,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(8)),
+      ),
+      labelStyle: TextStyle(
+        color: dark ? ink : const Color(0xff41614f),
+        fontSize: 11,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+    ),
+    listTileTheme: const ListTileThemeData(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: primary,
+        foregroundColor: onPrimary,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: primary,
+        side: BorderSide(color: primary),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+      ),
+    ),
+    dialogTheme: DialogThemeData(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(20)),
+      ),
+    ),
+    popupMenuTheme: const PopupMenuThemeData(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(14)),
+      ),
+    ),
+    snackBarTheme: const SnackBarThemeData(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+    ),
+    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+      ),
+    ),
+    textTheme: (dark ? ThemeData.dark() : ThemeData.light()).textTheme.apply(
+      bodyColor: ink,
+      displayColor: ink,
+    ),
+  );
+}
+
+enum ArchiveView { timeline, people, tags, settings }
 
 class ArchiveFilters {
   const ArchiveFilters({
@@ -326,9 +425,16 @@ class ArchiveFilters {
 }
 
 class ArchiveHome extends StatefulWidget {
-  const ArchiveHome({super.key, this.repository});
+  const ArchiveHome({
+    super.key,
+    this.repository,
+    this.settings = AppSettings.defaults,
+    this.onSettingsChanged,
+  });
 
   final ArchiveRepository? repository;
+  final AppSettings settings;
+  final Future<void> Function(AppSettings settings)? onSettingsChanged;
 
   @override
   State<ArchiveHome> createState() => _ArchiveHomeState();
@@ -434,6 +540,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
         people: archive.people,
         events: archive.events,
         customTags: _customTags(archive),
+        defaultPrecision: widget.settings.defaultPrecision,
       ),
     );
     if (event == null) return;
@@ -552,13 +659,13 @@ class _ArchiveHomeState extends State<ArchiveHome> {
       false;
 
   Future<void> _importArchive() async {
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(label: 'JSON 档案', extensions: ['json']),
-      ],
-    );
-    if (file == null) return;
     try {
+      final file = await openFile(
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON 档案', extensions: ['json']),
+        ],
+      );
+      if (file == null) return;
       final imported = Archive.decode(await file.readAsString());
       final preview = await _repository.preview(imported);
       if (!mounted) return;
@@ -580,17 +687,21 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   Future<void> _exportArchive() async {
     final archive = _archive;
     if (archive == null) return;
-    final name =
-        '人物事件档案-${DateTime.now().toIso8601String().substring(0, 10)}.json';
-    final location = await getSaveLocation(suggestedName: name);
-    if (location == null) return;
-    final file = XFile.fromData(
-      Uint8List.fromList(utf8.encode(archive.encode())),
-      mimeType: 'application/json',
-      name: name,
-    );
-    await file.saveTo(location.path);
-    if (mounted) _notice('档案已导出。');
+    try {
+      final name =
+          '人物事件档案-${DateTime.now().toIso8601String().substring(0, 10)}.json';
+      final location = await getSaveLocation(suggestedName: name);
+      if (location == null) return;
+      final file = XFile.fromData(
+        Uint8List.fromList(utf8.encode(archive.encode())),
+        mimeType: 'application/json',
+        name: name,
+      );
+      await file.saveTo(location.path);
+      if (mounted) _notice('档案已导出。');
+    } catch (_) {
+      if (mounted) _notice('无法导出档案文件。');
+    }
   }
 
   @override
@@ -605,6 +716,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= 900;
         final tagsView = _view == ArchiveView.tags;
+        final utilityView = tagsView || _view == ArchiveView.settings;
         final selected = _selectedPerson ?? _selectedEvent;
         final list = switch (_view) {
           ArchiveView.timeline => TimelineList(
@@ -628,16 +740,25 @@ class _ArchiveHomeState extends State<ArchiveHome> {
             onChanged: _saveCustomTags,
             onDelete: _deleteCustomTag,
           ),
+          ArchiveView.settings => SettingsPage(
+            settings: widget.settings,
+            onChanged: (settings) async {
+              final save = widget.onSettingsChanged;
+              if (save == null) return;
+              try {
+                await save(settings);
+              } catch (_) {
+                if (mounted) _notice('设置保存失败。');
+              }
+            },
+            onImport: _importArchive,
+            onExport: _exportArchive,
+          ),
         };
         final workspace = Column(
           children: [
-            _Header(
-              view: _view,
-              onImport: _importArchive,
-              onExport: _exportArchive,
-              showArchiveMenu: !desktop,
-            ),
-            if (!tagsView)
+            _Header(view: _view),
+            if (!utilityView)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
                 child: TextField(
@@ -648,7 +769,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                   ),
                 ),
               ),
-            if (!tagsView)
+            if (!utilityView)
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -678,7 +799,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                     ),
                 ],
               ),
-            if (_view == ArchiveView.timeline && !tagsView)
+            if (_view == ArchiveView.timeline)
               ReminderPanel(events: _dueEvents(archive), onOpen: _selectEvent),
             Expanded(
               child: desktop
@@ -689,7 +810,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                           duration: const Duration(milliseconds: 220),
                           curve: Curves.easeOutCubic,
                           alignment: Alignment.centerRight,
-                          child: selected != null && !tagsView
+                          child: selected != null && !utilityView
                               ? AnimatedSwitcher(
                                   duration: const Duration(milliseconds: 220),
                                   transitionBuilder: _detailTransition,
@@ -722,7 +843,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                   : AnimatedSwitcher(
                       duration: const Duration(milliseconds: 220),
                       transitionBuilder: _detailTransition,
-                      child: selected != null && !tagsView
+                      child: selected != null && !utilityView
                           ? KeyedSubtree(
                               key: ValueKey('detail-${_eventId ?? _personId}'),
                               child: ArchiveDetail(
@@ -754,70 +875,13 @@ class _ArchiveHomeState extends State<ArchiveHome> {
             child: desktop
                 ? Row(
                     children: [
-                      NavigationRail(
-                        backgroundColor: AtlasPalette.sidebar,
-                        extended: true,
-                        minExtendedWidth: 264,
-                        groupAlignment: -0.78,
-                        selectedIndex: _view.index,
-                        onDestinationSelected: (index) => setState(() {
-                          _view = ArchiveView.values[index];
+                      _DesktopSidebar(
+                        view: _view,
+                        onChanged: (view) => setState(() {
+                          _view = view;
                           _personId = null;
                           _eventId = null;
                         }),
-                        leading: const Padding(
-                          padding: EdgeInsets.fromLTRB(12, 22, 12, 28),
-                          child: _Brand(),
-                        ),
-                        trailing: SizedBox(
-                          width: 228,
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                const Divider(color: AtlasPalette.line),
-                                const SizedBox(height: 14),
-                                const Text(
-                                  '你的资料只保存在此设备。\n导出文件可用于备份与迁移。',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    height: 1.6,
-                                    color: AtlasPalette.muted,
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                OutlinedButton(
-                                  onPressed: _exportArchive,
-                                  child: const Text('导出 JSON'),
-                                ),
-                                const SizedBox(height: 8),
-                                OutlinedButton(
-                                  onPressed: _importArchive,
-                                  child: const Text('导入资料'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        destinations: const [
-                          NavigationRailDestination(
-                            icon: Icon(Icons.timeline_outlined),
-                            selectedIcon: Icon(Icons.timeline),
-                            label: Text('时间线'),
-                          ),
-                          NavigationRailDestination(
-                            icon: Icon(Icons.people_outline),
-                            selectedIcon: Icon(Icons.people),
-                            label: Text('人物目录'),
-                          ),
-                          NavigationRailDestination(
-                            icon: Icon(Icons.sell_outlined),
-                            selectedIcon: Icon(Icons.sell),
-                            label: Text('标签管理'),
-                          ),
-                        ],
                       ),
                       Expanded(child: workspace),
                     ],
@@ -849,9 +913,14 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                       selectedIcon: Icon(Icons.sell),
                       label: '标签',
                     ),
+                    NavigationDestination(
+                      icon: Icon(Icons.settings_outlined),
+                      selectedIcon: Icon(Icons.settings),
+                      label: '设置',
+                    ),
                   ],
                 ),
-          floatingActionButton: desktop || tagsView
+          floatingActionButton: desktop || utilityView
               ? null
               : FloatingActionButton.extended(
                   onPressed: _view == ArchiveView.timeline
@@ -950,31 +1019,147 @@ class _Brand extends StatelessWidget {
     children: [
       Image.asset('assets/logo.png', width: 34, height: 34),
       const SizedBox(width: 10),
-      const Column(
+      Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('事件录', style: TextStyle(fontWeight: FontWeight.w700)),
-          Text(
-            'PERSON · EVENT ATLAS',
-            style: TextStyle(fontSize: 9, color: AtlasPalette.muted),
-          ),
+          Text('PERSON · EVENT ATLAS', style: TextStyle(fontSize: 9)),
         ],
       ),
     ],
   );
 }
 
-class _Header extends StatelessWidget {
-  const _Header({
-    required this.view,
-    required this.onImport,
-    required this.onExport,
-    required this.showArchiveMenu,
-  });
+class _DesktopSidebar extends StatelessWidget {
+  const _DesktopSidebar({required this.view, required this.onChanged});
+
   final ArchiveView view;
-  final Future<void> Function() onImport;
-  final Future<void> Function() onExport;
-  final bool showArchiveMenu;
+  final ValueChanged<ArchiveView> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 264,
+      child: ColoredBox(
+        color: colors.surface,
+        child: Column(
+          children: [
+            Expanded(
+              child: NavigationRail(
+                backgroundColor: Colors.transparent,
+                extended: true,
+                minExtendedWidth: 264,
+                groupAlignment: -0.78,
+                selectedIndex: view == ArchiveView.settings ? null : view.index,
+                onDestinationSelected: (index) =>
+                    onChanged(ArchiveView.values[index]),
+                leading: const Padding(
+                  padding: EdgeInsets.fromLTRB(12, 22, 12, 28),
+                  child: _Brand(),
+                ),
+                destinations: const [
+                  NavigationRailDestination(
+                    icon: Icon(Icons.timeline_outlined),
+                    selectedIcon: Icon(Icons.timeline),
+                    label: Text('时间线'),
+                  ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.people_outline),
+                    selectedIcon: Icon(Icons.people),
+                    label: Text('人物目录'),
+                  ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.sell_outlined),
+                    selectedIcon: Icon(Icons.sell),
+                    label: Text('标签管理'),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SidebarSettingsButton(
+                    selected: view == ArchiveView.settings,
+                    onPressed: () => onChanged(ArchiveView.settings),
+                  ),
+                  const SizedBox(height: 12),
+                  Divider(color: colors.outline),
+                  const SizedBox(height: 14),
+                  Text(
+                    '你的资料只保存在此设备。\n设置页可管理备份与偏好。',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.6,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SidebarSettingsButton extends StatelessWidget {
+  const _SidebarSettingsButton({
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final selectedColor = colors.primary.withAlpha(
+      Theme.of(context).brightness == Brightness.dark ? 0x66 : 0x26,
+    );
+    return Material(
+      color: selected ? selectedColor : Colors.transparent,
+      borderRadius: const BorderRadius.all(Radius.circular(12)),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        hoverColor: colors.primary.withAlpha(0x1f),
+        splashColor: colors.primary.withAlpha(0x33),
+        child: SizedBox(
+          height: 56,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: Row(
+              children: [
+                Icon(
+                  selected ? Icons.settings : Icons.settings_outlined,
+                  color: selected ? colors.primary : colors.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '设置',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: selected ? colors.primary : colors.onSurfaceVariant,
+                    fontWeight: selected ? FontWeight.w700 : null,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Header extends StatelessWidget {
+  const _Header({required this.view});
+  final ArchiveView view;
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(20, 18, 16, 14),
@@ -987,7 +1172,7 @@ class _Header extends StatelessWidget {
               Text(
                 'PERSON · EVENT ATLAS',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: AtlasPalette.green,
+                  color: Theme.of(context).colorScheme.primary,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.4,
                 ),
@@ -997,23 +1182,11 @@ class _Header extends StatelessWidget {
                 ArchiveView.timeline => '事件时间线',
                 ArchiveView.people => '人物目录',
                 ArchiveView.tags => '标签管理',
+                ArchiveView.settings => '设置',
               }, style: Theme.of(context).textTheme.headlineSmall),
             ],
           ),
         ),
-        if (showArchiveMenu)
-          PopupMenuButton<String>(
-            tooltip: '档案操作',
-            onSelected: (value) {
-              if (value == 'import') onImport();
-              if (value == 'export') onExport();
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'import', child: Text('导入 JSON')),
-              PopupMenuItem(value: 'export', child: Text('导出 JSON')),
-            ],
-          ),
-        if (showArchiveMenu) const SizedBox(width: 4),
       ],
     ),
   );
@@ -1046,9 +1219,9 @@ class FilterBar extends StatelessWidget {
               padding: const EdgeInsets.only(right: 10),
               child: Text(
                 '筛选条件',
-                style: Theme.of(
-                  context,
-                ).textTheme.labelLarge?.copyWith(color: AtlasPalette.muted),
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
             _filterMenu<String?>(
@@ -1134,11 +1307,15 @@ class FilterBar extends StatelessWidget {
     padding: const EdgeInsets.only(right: 8),
     child: DecoratedBox(
       decoration: BoxDecoration(
-        color: value == null ? AtlasPalette.card : AtlasPalette.sage,
+        color: value == null
+            ? Theme.of(context).colorScheme.surface
+            : Theme.of(context).colorScheme.primary.withAlpha(0x22),
         border: Border.all(
-          color: value == null ? AtlasPalette.line : AtlasPalette.green,
+          color: value == null
+              ? Theme.of(context).colorScheme.outline
+              : Theme.of(context).colorScheme.primary,
         ),
-        borderRadius: const BorderRadius.all(Radius.circular(10)),
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<T>(
@@ -1149,7 +1326,7 @@ class FilterBar extends StatelessWidget {
           icon: const Icon(Icons.keyboard_arrow_down, size: 18),
           focusColor: Colors.transparent,
           borderRadius: const BorderRadius.all(Radius.circular(12)),
-          dropdownColor: AtlasPalette.card,
+          dropdownColor: Theme.of(context).colorScheme.surface,
           elevation: 6,
           items: items,
           onChanged: (next) {
@@ -1298,8 +1475,12 @@ class ReminderPanel extends StatelessWidget {
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 mouseCursor: SystemMouseCursors.click,
-                hoverColor: AtlasPalette.interactiveHover,
-                splashColor: AtlasPalette.interactiveSplash,
+                hoverColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withAlpha(0x1f),
+                splashColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withAlpha(0x33),
                 onTap: () => onOpen(event.id),
                 title: Text(event.title),
                 subtitle: Text(
@@ -1335,7 +1516,7 @@ class TimelineList extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
       itemCount: events.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (_, index) {
+      itemBuilder: (context, index) {
         final event = events[index];
         final links = _orderedPeople(event.people);
         return IntrinsicHeight(
@@ -1348,11 +1529,11 @@ class TimelineList extends StatelessWidget {
                   padding: const EdgeInsets.only(top: 22),
                   child: Text(
                     event.dateLabel,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                       height: 1.45,
-                      color: AtlasPalette.muted,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
@@ -1366,7 +1547,10 @@ class TimelineList extends StatelessWidget {
                         left: 9,
                         top: 32,
                         bottom: -10,
-                        child: Container(width: 1, color: AtlasPalette.line),
+                        child: Container(
+                          width: 1,
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
                       ),
                     Positioned(
                       top: 24,
@@ -1386,10 +1570,14 @@ class TimelineList extends StatelessWidget {
               Expanded(
                 child: Card(
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(16),
                     mouseCursor: SystemMouseCursors.click,
-                    hoverColor: AtlasPalette.interactiveHover,
-                    splashColor: AtlasPalette.interactiveSplash,
+                    hoverColor: Theme.of(
+                      context,
+                    ).colorScheme.primary.withAlpha(0x1f),
+                    splashColor: Theme.of(
+                      context,
+                    ).colorScheme.primary.withAlpha(0x33),
                     onTap: () => onOpen(event.id),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -1411,10 +1599,12 @@ class TimelineList extends StatelessWidget {
                                 if (event.place.isNotEmpty)
                                   Text(
                                     event.place,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
-                                      color: AtlasPalette.muted,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
                                     ),
                                   ),
                                 if (event.description.isNotEmpty)
@@ -1532,7 +1722,7 @@ class PeopleList extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
       itemCount: people.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (_, index) {
+      itemBuilder: (context, index) {
         final person = people[index];
         final count = events
             .where(
@@ -1542,12 +1732,14 @@ class PeopleList extends StatelessWidget {
         return Card(
           child: ListTile(
             mouseCursor: SystemMouseCursors.click,
-            hoverColor: AtlasPalette.interactiveHover,
-            splashColor: AtlasPalette.interactiveSplash,
+            hoverColor: Theme.of(context).colorScheme.primary.withAlpha(0x1f),
+            splashColor: Theme.of(context).colorScheme.primary.withAlpha(0x33),
             onTap: () => onOpen(person.id),
             contentPadding: const EdgeInsets.all(16),
             leading: CircleAvatar(
-              backgroundColor: AtlasPalette.sage,
+              backgroundColor: Theme.of(
+                context,
+              ).colorScheme.primary.withAlpha(0x30),
               child: Text(person.name.characters.first),
             ),
             title: Text(person.name),
@@ -1608,166 +1800,188 @@ class ArchiveDetail extends StatelessWidget {
                     item.people.any((link) => link.personId == person!.id),
               )
               .toList();
-    return Container(
-      decoration: const BoxDecoration(
-        color: AtlasPalette.card,
-        border: Border(left: BorderSide(color: AtlasPalette.line)),
+    return ClipRRect(
+      borderRadius: const BorderRadius.only(
+        topLeft: Radius.circular(18),
+        bottomLeft: Radius.circular(18),
       ),
-      child: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Row(
-            children: [
-              IconButton(onPressed: onClose, icon: const Icon(Icons.close)),
-              const Spacer(),
-              PopupMenuButton<String>(
-                onSelected: (action) {
-                  if (action == 'edit') {
-                    person != null
-                        ? onEditPerson(person!)
-                        : onEditEvent(event!);
-                  }
-                  if (person != null && action == 'delete') {
-                    onDeletePerson(person!);
-                  }
-                  if (event != null) {
-                    if (action == 'cancel') onCancelEvent(event!);
-                    if (action == 'postpone') onPostponeEvent(event!);
-                    if (action == 'start') {
-                      onTransitionEvent(event!, EventStatus.active);
-                    }
-                    if (action == 'complete') {
-                      onTransitionEvent(event!, EventStatus.completed);
-                    }
-                    if (action == 'permanent-delete') {
-                      onDeleteEvent(event!);
-                    }
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'edit', child: Text('编辑')),
-                  if (event != null && event!.status == EventStatus.scheduled)
-                    PopupMenuItem(
-                      value: 'postpone',
-                      child: Text(event!.start.isEmpty ? '设置日期' : '延期'),
-                    ),
-                  if (event != null && event!.status == EventStatus.scheduled)
-                    const PopupMenuItem(value: 'start', child: Text('开始')),
-                  if (event != null && event!.status == EventStatus.active)
-                    const PopupMenuItem(value: 'complete', child: Text('结束')),
-                  if (event != null &&
-                      (event!.status == EventStatus.scheduled ||
-                          event!.status == EventStatus.active))
-                    const PopupMenuItem(value: 'cancel', child: Text('取消事件')),
-                  if (person != null)
-                    const PopupMenuItem(value: 'delete', child: Text('删除')),
-                  if (event != null)
-                    const PopupMenuItem(
-                      value: 'permanent-delete',
-                      child: Text('永久删除'),
-                    ),
-                ],
-              ),
-            ],
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border(
+            left: BorderSide(color: Theme.of(context).colorScheme.outline),
           ),
-          if (person != null)
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: AtlasPalette.sage,
-              child: Text(
-                person!.name.characters.first,
-                style: const TextStyle(fontSize: 22),
+        ),
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Row(
+              children: [
+                IconButton(onPressed: onClose, icon: const Icon(Icons.close)),
+                const Spacer(),
+                PopupMenuButton<String>(
+                  onSelected: (action) {
+                    if (action == 'edit') {
+                      person != null
+                          ? onEditPerson(person!)
+                          : onEditEvent(event!);
+                    }
+                    if (person != null && action == 'delete') {
+                      onDeletePerson(person!);
+                    }
+                    if (event != null) {
+                      if (action == 'cancel') onCancelEvent(event!);
+                      if (action == 'postpone') onPostponeEvent(event!);
+                      if (action == 'start') {
+                        onTransitionEvent(event!, EventStatus.active);
+                      }
+                      if (action == 'complete') {
+                        onTransitionEvent(event!, EventStatus.completed);
+                      }
+                      if (action == 'permanent-delete') {
+                        onDeleteEvent(event!);
+                      }
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'edit', child: Text('编辑')),
+                    if (event != null && event!.status == EventStatus.scheduled)
+                      PopupMenuItem(
+                        value: 'postpone',
+                        child: Text(event!.start.isEmpty ? '设置日期' : '延期'),
+                      ),
+                    if (event != null && event!.status == EventStatus.scheduled)
+                      const PopupMenuItem(value: 'start', child: Text('开始')),
+                    if (event != null && event!.status == EventStatus.active)
+                      const PopupMenuItem(value: 'complete', child: Text('结束')),
+                    if (event != null &&
+                        (event!.status == EventStatus.scheduled ||
+                            event!.status == EventStatus.active))
+                      const PopupMenuItem(value: 'cancel', child: Text('取消事件')),
+                    if (person != null)
+                      const PopupMenuItem(value: 'delete', child: Text('删除')),
+                    if (event != null)
+                      const PopupMenuItem(
+                        value: 'permanent-delete',
+                        child: Text('永久删除'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+            if (person != null)
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withAlpha(0x30),
+                child: Text(
+                  person!.name.characters.first,
+                  style: const TextStyle(fontSize: 22),
+                ),
               ),
+            const SizedBox(height: 14),
+            Text(
+              person != null ? '人物档案' : event!.dateLabel,
+              style: TextStyle(color: Theme.of(context).colorScheme.primary),
             ),
-          const SizedBox(height: 14),
-          Text(
-            person != null ? '人物档案' : event!.dateLabel,
-            style: TextStyle(color: Theme.of(context).colorScheme.primary),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            person?.name ?? event!.title,
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          if ((person?.bio ?? event?.description ?? '').isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(person?.bio ?? event!.description),
+            const SizedBox(height: 4),
+            Text(
+              person?.name ?? event!.title,
+              style: Theme.of(context).textTheme.headlineSmall,
             ),
-          const SizedBox(height: 24),
-          if (event != null) ...[
-            Chip(
-              backgroundColor: _eventStatusColor(event!.status),
-              label: Text(
-                event!.status.label,
-                style: TextStyle(color: _eventStatusTextColor(event!.status)),
+            if ((person?.bio ?? event?.description ?? '').isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(person?.bio ?? event!.description),
               ),
-            ),
-            const SizedBox(height: 12),
-            DetailSection(
-              title: '事件信息',
-              values: {'时间': event!.dateLabel, '地点': event!.place},
-            ),
-            const SizedBox(height: 20),
-            Text('关联人物', style: Theme.of(context).textTheme.titleMedium),
-            ..._orderedPeople(event!.people).map(
-              (link) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                mouseCursor: SystemMouseCursors.click,
-                hoverColor: AtlasPalette.interactiveHover,
-                splashColor: AtlasPalette.interactiveSplash,
-                onTap: () => onPerson(link.personId),
-                title: Text(names[link.personId]?.name ?? '未知人物'),
-                trailing: Text(link.role.label),
+            const SizedBox(height: 24),
+            if (event != null) ...[
+              Chip(
+                backgroundColor: _eventStatusColor(event!.status),
+                label: Text(
+                  event!.status.label,
+                  style: TextStyle(color: _eventStatusTextColor(event!.status)),
+                ),
               ),
-            ),
-            if (event!.previousEventIds.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Text('前序事件', style: Theme.of(context).textTheme.titleMedium),
-              ...event!.previousEventIds.map((id) {
-                final previous = archive.events
-                    .where((item) => item.id == id)
-                    .firstOrNull;
-                return ListTile(
+              const SizedBox(height: 12),
+              DetailSection(
+                title: '事件信息',
+                values: {'时间': event!.dateLabel, '地点': event!.place},
+              ),
+              const SizedBox(height: 20),
+              Text('关联人物', style: Theme.of(context).textTheme.titleMedium),
+              ..._orderedPeople(event!.people).map(
+                (link) => ListTile(
                   contentPadding: EdgeInsets.zero,
-                  mouseCursor: previous == null
-                      ? SystemMouseCursors.basic
-                      : SystemMouseCursors.click,
-                  hoverColor: AtlasPalette.interactiveHover,
-                  splashColor: AtlasPalette.interactiveSplash,
-                  onTap: previous == null ? null : () => onEvent(id),
-                  title: Text(previous?.title ?? '未知事件'),
-                  subtitle: Text(previous?.dateLabel ?? '关联资料缺失'),
+                  mouseCursor: SystemMouseCursors.click,
+                  hoverColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withAlpha(0x1f),
+                  splashColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withAlpha(0x33),
+                  onTap: () => onPerson(link.personId),
+                  title: Text(names[link.personId]?.name ?? '未知人物'),
+                  trailing: Text(link.role.label),
+                ),
+              ),
+              if (event!.previousEventIds.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Text('前序事件', style: Theme.of(context).textTheme.titleMedium),
+                ...event!.previousEventIds.map((id) {
+                  final previous = archive.events
+                      .where((item) => item.id == id)
+                      .firstOrNull;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    mouseCursor: previous == null
+                        ? SystemMouseCursors.basic
+                        : SystemMouseCursors.click,
+                    hoverColor: Theme.of(
+                      context,
+                    ).colorScheme.primary.withAlpha(0x1f),
+                    splashColor: Theme.of(
+                      context,
+                    ).colorScheme.primary.withAlpha(0x33),
+                    onTap: previous == null ? null : () => onEvent(id),
+                    title: Text(previous?.title ?? '未知事件'),
+                    subtitle: Text(previous?.dateLabel ?? '关联资料缺失'),
+                    trailing: const Icon(Icons.chevron_right),
+                  );
+                }),
+              ],
+            ],
+            if (person != null) ...[
+              DetailSection(
+                title: '资料',
+                values: {
+                  '标签': person!.tags.map((tag) => '#$tag').join('  '),
+                  '备注': person!.notes,
+                  '来源': person!.sources.join('；'),
+                },
+              ),
+              const SizedBox(height: 20),
+              Text('相关事件', style: Theme.of(context).textTheme.titleMedium),
+              ...related.map(
+                (item) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  mouseCursor: SystemMouseCursors.click,
+                  hoverColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withAlpha(0x1f),
+                  splashColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withAlpha(0x33),
+                  onTap: () => onEvent(item.id),
+                  title: Text(item.title),
+                  subtitle: Text(item.dateLabel),
                   trailing: const Icon(Icons.chevron_right),
-                );
-              }),
+                ),
+              ),
             ],
           ],
-          if (person != null) ...[
-            DetailSection(
-              title: '资料',
-              values: {
-                '标签': person!.tags.map((tag) => '#$tag').join('  '),
-                '备注': person!.notes,
-                '来源': person!.sources.join('；'),
-              },
-            ),
-            const SizedBox(height: 20),
-            Text('相关事件', style: Theme.of(context).textTheme.titleMedium),
-            ...related.map(
-              (item) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                mouseCursor: SystemMouseCursors.click,
-                hoverColor: AtlasPalette.interactiveHover,
-                splashColor: AtlasPalette.interactiveSplash,
-                onTap: () => onEvent(item.id),
-                title: Text(item.title),
-                subtitle: Text(item.dateLabel),
-                trailing: const Icon(Icons.chevron_right),
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -1795,7 +2009,9 @@ class DetailSection extends StatelessWidget {
                     width: 52,
                     child: Text(
                       entry.key,
-                      style: const TextStyle(color: AtlasPalette.muted),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   Expanded(child: Text(entry.value)),
@@ -1852,6 +2068,178 @@ class ImportPreviewDialog extends StatelessWidget {
         child: const Text('确认替换'),
       ),
     ],
+  );
+}
+
+class SettingsPage extends StatelessWidget {
+  const SettingsPage({
+    super.key,
+    required this.settings,
+    required this.onChanged,
+    required this.onImport,
+    required this.onExport,
+  });
+
+  final AppSettings settings;
+  final Future<void> Function(AppSettings settings) onChanged;
+  final Future<void> Function() onImport;
+  final Future<void> Function() onExport;
+
+  void _change(AppSettings next) => unawaited(onChanged(next));
+
+  @override
+  Widget build(BuildContext context) {
+    final colorSection = _settingsSection(
+      context,
+      title: '主色预设',
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: AppPrimaryColor.values
+            .map(
+              (color) => ChoiceChip(
+                key: ValueKey('primary-${color.name}'),
+                label: Text(color.label),
+                avatar: CircleAvatar(
+                  backgroundColor: Color(color.value),
+                  radius: 8,
+                ),
+                selectedColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withAlpha(0x30),
+                checkmarkColor: Theme.of(context).colorScheme.primary,
+                selected: settings.primaryColor == color,
+                onSelected: (_) =>
+                    _change(settings.copyWith(primaryColor: color)),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    final precisionSection = _settingsSection(
+      context,
+      title: '新建事件默认时间精度',
+      child: DropdownButtonFormField<Precision>(
+        initialValue: settings.defaultPrecision,
+        decoration: const InputDecoration(
+          labelText: '时间精度',
+          helperText: '只影响新建事件，编辑已有事件保持原值。',
+        ),
+        items: Precision.values
+            .map(
+              (precision) => DropdownMenuItem(
+                value: precision,
+                child: Text(precision.label),
+              ),
+            )
+            .toList(),
+        onChanged: (value) {
+          if (value != null) {
+            _change(settings.copyWith(defaultPrecision: value));
+          }
+        },
+      ),
+    );
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('应用偏好', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 6),
+              Text(
+                '设置会自动保存在本机，不会写入导出的档案文件。',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 20),
+              _settingsSection(
+                context,
+                title: '数据管理',
+                child: Row(
+                  children: [
+                    FilledButton.icon(
+                      onPressed: onImport,
+                      icon: const Icon(Icons.file_upload_outlined),
+                      label: const Text('导入 JSON'),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton.icon(
+                      onPressed: onExport,
+                      icon: const Icon(Icons.file_download_outlined),
+                      label: const Text('导出 JSON'),
+                    ),
+                  ],
+                ),
+              ),
+              _settingsSection(
+                context,
+                title: '主题模式',
+                child: RadioGroup<AppThemeMode>(
+                  groupValue: settings.themeMode,
+                  onChanged: (value) {
+                    if (value != null) {
+                      _change(settings.copyWith(themeMode: value));
+                    }
+                  },
+                  child: Column(
+                    children: AppThemeMode.values
+                        .map(
+                          (mode) => RadioListTile<AppThemeMode>(
+                            contentPadding: EdgeInsets.zero,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(12),
+                              ),
+                            ),
+                            title: Text(mode.label),
+                            value: mode,
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+              ),
+              LayoutBuilder(
+                builder: (context, constraints) => constraints.maxWidth >= 720
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(width: 320, child: colorSection),
+                          const SizedBox(width: 16),
+                          Expanded(child: precisionSection),
+                        ],
+                      )
+                    : Column(children: [colorSection, precisionSection]),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _settingsSection(
+    BuildContext context, {
+    required String title,
+    required Widget child,
+  }) => Card(
+    margin: const EdgeInsets.only(bottom: 16),
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    ),
   );
 }
 
@@ -1941,9 +2329,11 @@ class _CustomTagsPageState extends State<CustomTagsPage> {
           children: [
             Text('自定义标签', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               '在这里维护所有可复用的自定义标签，事件和人物编辑时直接选择。',
-              style: TextStyle(color: AtlasPalette.muted),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 20),
             Row(
@@ -1971,9 +2361,11 @@ class _CustomTagsPageState extends State<CustomTagsPage> {
             Text('我的标签', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 10),
             if (widget.customTags.isEmpty)
-              const Text(
+              Text(
                 '还没有自定义标签。',
-                style: TextStyle(color: AtlasPalette.muted),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               )
             else
               Wrap(
@@ -1995,17 +2387,21 @@ class _CustomTagsPageState extends State<CustomTagsPage> {
                                     children: [
                                       Text(
                                         '#$tag',
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w700,
-                                          color: AtlasPalette.green,
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.primary,
                                         ),
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
                                         '关联 ${widget.eventCounts[tag] ?? 0} 个事件',
-                                        style: const TextStyle(
-                                          color: AtlasPalette.muted,
+                                        style: TextStyle(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
                                           fontSize: 12,
                                         ),
                                       ),
@@ -2165,11 +2561,13 @@ class EventEditor extends StatefulWidget {
     required this.people,
     this.events = const [],
     this.customTags = const [],
+    this.defaultPrecision = Precision.day,
   });
   final EventItem? initial;
   final List<Person> people;
   final List<EventItem> events;
   final List<String> customTags;
+  final Precision defaultPrecision;
   @override
   State<EventEditor> createState() => _EventEditorState();
 }
@@ -2198,8 +2596,13 @@ class _EventEditorState extends State<EventEditor> {
   late final _tags = TextEditingController(
     text: widget.initial?.tags.join('，'),
   );
-  late Precision _precision = widget.initial?.precision ?? Precision.day;
-  late EventStatus _status = widget.initial?.status ?? EventStatus.scheduled;
+  late Precision _precision =
+      widget.initial?.precision ?? widget.defaultPrecision;
+  late EventStatus _status =
+      widget.initial?.status ??
+      (widget.defaultPrecision == Precision.day
+          ? EventStatus.scheduled
+          : EventStatus.completed);
   late final List<PersonLink> _links =
       widget.initial?.people.toList() ??
       [PersonLink(personId: widget.people.first.id, role: Role.participant)];
@@ -2246,7 +2649,7 @@ class _EventEditorState extends State<EventEditor> {
                   initialValue: _status,
                   decoration: const InputDecoration(labelText: '状态'),
                   borderRadius: const BorderRadius.all(Radius.circular(12)),
-                  dropdownColor: AtlasPalette.card,
+                  dropdownColor: Theme.of(context).colorScheme.surface,
                   items: EventStatus.values
                       .map(
                         (status) => DropdownMenuItem(
@@ -2276,7 +2679,7 @@ class _EventEditorState extends State<EventEditor> {
                   isDense: true,
                   decoration: const InputDecoration(labelText: '时间精度'),
                   borderRadius: const BorderRadius.all(Radius.circular(12)),
-                  dropdownColor: AtlasPalette.card,
+                  dropdownColor: Theme.of(context).colorScheme.surface,
                   elevation: 6,
                   items:
                       (_status == EventStatus.scheduled
@@ -2372,7 +2775,10 @@ class _EventEditorState extends State<EventEditor> {
                 const SizedBox(width: 8),
                 Text(
                   '已选 ${_previousEventIds.length}',
-                  style: TextStyle(color: AtlasPalette.muted, fontSize: 12),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),
@@ -2396,8 +2802,13 @@ class _EventEditorState extends State<EventEditor> {
               (event) => CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 dense: true,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                ),
                 mouseCursor: SystemMouseCursors.click,
-                hoverColor: AtlasPalette.interactiveHover,
+                hoverColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withAlpha(0x1f),
                 value: _previousEventIds.contains(event.id),
                 title: Text(event.title),
                 subtitle: Text(event.dateLabel),
@@ -2450,8 +2861,8 @@ class _EventEditorState extends State<EventEditor> {
       children: [
         Text(
           title,
-          style: const TextStyle(
-            color: AtlasPalette.green,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.primary,
             fontSize: 14,
             fontWeight: FontWeight.w700,
           ),
@@ -2526,7 +2937,7 @@ class _EventEditorState extends State<EventEditor> {
         decoration: const InputDecoration(labelText: '国家/地区 *'),
         hint: const Text('请选择'),
         borderRadius: const BorderRadius.all(Radius.circular(12)),
-        dropdownColor: AtlasPalette.card,
+        dropdownColor: Theme.of(context).colorScheme.surface,
         elevation: 6,
         items: eventLocationCountries
             .map(
@@ -2550,7 +2961,7 @@ class _EventEditorState extends State<EventEditor> {
           decoration: const InputDecoration(labelText: '省级地区 *'),
           hint: const Text('请选择'),
           borderRadius: const BorderRadius.all(Radius.circular(12)),
-          dropdownColor: AtlasPalette.card,
+          dropdownColor: Theme.of(context).colorScheme.surface,
           elevation: 6,
           items: regions.provinces
               .map(
@@ -2573,7 +2984,7 @@ class _EventEditorState extends State<EventEditor> {
             decoration: const InputDecoration(labelText: '城市 *'),
             hint: const Text('请选择'),
             borderRadius: const BorderRadius.all(Radius.circular(12)),
-            dropdownColor: AtlasPalette.card,
+            dropdownColor: Theme.of(context).colorScheme.surface,
             elevation: 6,
             items: cities
                 .map((city) => DropdownMenuItem(value: city, child: Text(city)))
@@ -2593,7 +3004,7 @@ class _EventEditorState extends State<EventEditor> {
             decoration: const InputDecoration(labelText: '区/县 *'),
             hint: const Text('请选择'),
             borderRadius: const BorderRadius.all(Radius.circular(12)),
-            dropdownColor: AtlasPalette.card,
+            dropdownColor: Theme.of(context).colorScheme.surface,
             elevation: 6,
             items: districts
                 .map(
@@ -2626,7 +3037,7 @@ class _EventEditorState extends State<EventEditor> {
             child: DropdownButtonFormField<String>(
               initialValue: link.personId,
               borderRadius: const BorderRadius.all(Radius.circular(12)),
-              dropdownColor: AtlasPalette.card,
+              dropdownColor: Theme.of(context).colorScheme.surface,
               elevation: 6,
               items: widget.people
                   .map(
@@ -2649,7 +3060,7 @@ class _EventEditorState extends State<EventEditor> {
             child: DropdownButtonFormField<Role>(
               initialValue: link.role,
               borderRadius: const BorderRadius.all(Radius.circular(12)),
-              dropdownColor: AtlasPalette.card,
+              dropdownColor: Theme.of(context).colorScheme.surface,
               elevation: 6,
               items: Role.values
                   .map(

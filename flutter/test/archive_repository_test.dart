@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:person_event_atlas/app_settings.dart';
 import 'package:path/path.dart' as path;
 import 'package:person_event_atlas/archive.dart';
 import 'package:person_event_atlas/archive_repository.dart';
@@ -46,6 +47,95 @@ void main() {
     await repository.saveCustomTags(['厦门', '  厦门  ', '长期项目']);
 
     expect((await repository.load()).customTags, ['厦门', '长期项目']);
+  });
+
+  test('loads default settings and persists settings in metadata', () async {
+    expect((await repository.loadSettings()).themeMode, AppThemeMode.system);
+    expect(
+      (await repository.loadSettings()).primaryColor,
+      AppPrimaryColor.forestGreen,
+    );
+    expect((await repository.loadSettings()).defaultPrecision, Precision.day);
+
+    const settings = AppSettings(
+      themeMode: AppThemeMode.dark,
+      primaryColor: AppPrimaryColor.oceanBlue,
+      defaultPrecision: Precision.range,
+    );
+    await repository.saveSettings(settings);
+
+    final loaded = await repository.loadSettings();
+    expect(loaded.themeMode, AppThemeMode.dark);
+    expect(loaded.primaryColor, AppPrimaryColor.oceanBlue);
+    expect(loaded.defaultPrecision, Precision.range);
+  });
+
+  test(
+    'falls back to defaults for damaged settings and survives restart',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'event-atlas-settings-',
+      );
+      final databasePath = path.join(root.path, 'archive.sqlite');
+      final first = ArchiveRepository(databasePath: databasePath);
+      await first.saveSettings(
+        const AppSettings(
+          themeMode: AppThemeMode.light,
+          primaryColor: AppPrimaryColor.terracotta,
+          defaultPrecision: Precision.month,
+        ),
+      );
+      await first.close();
+
+      final restarted = ArchiveRepository(databasePath: databasePath);
+      expect(
+        (await restarted.loadSettings()).defaultPrecision,
+        Precision.month,
+      );
+      await restarted.close();
+
+      final raw = sqlite3.open(databasePath);
+      raw.execute(
+        "UPDATE metadata SET value = 'not-json' WHERE key = 'app_settings'",
+      );
+      raw.dispose();
+
+      final damaged = ArchiveRepository(databasePath: databasePath);
+      addTearDown(() async {
+        await damaged.close();
+        await root.delete(recursive: true);
+      });
+      expect(await damaged.loadSettings(), isA<AppSettings>());
+      expect((await damaged.loadSettings()).themeMode, AppThemeMode.system);
+      expect(
+        (await damaged.loadSettings()).primaryColor,
+        AppPrimaryColor.forestGreen,
+      );
+      expect((await damaged.loadSettings()).defaultPrecision, Precision.day);
+    },
+  );
+
+  test('archive replacement preserves local settings', () async {
+    const settings = AppSettings(
+      themeMode: AppThemeMode.dark,
+      primaryColor: AppPrimaryColor.terracotta,
+      defaultPrecision: Precision.year,
+    );
+    await repository.saveSettings(settings);
+    await repository.replace(
+      Archive(
+        people: [_person('p-1')],
+        events: const [],
+        customTags: const ['档案标签'],
+      ),
+    );
+
+    expect(await repository.loadSettings(), isA<AppSettings>());
+    final loaded = await repository.loadSettings();
+    expect(loaded.themeMode, AppThemeMode.dark);
+    expect(loaded.primaryColor, AppPrimaryColor.terracotta);
+    expect(loaded.defaultPrecision, Precision.year);
+    expect((await repository.load()).customTags, ['档案标签']);
   });
 
   test('saves new and existing events with matching revisions', () async {
