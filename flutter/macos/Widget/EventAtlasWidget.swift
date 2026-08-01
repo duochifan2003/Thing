@@ -201,7 +201,7 @@ struct EventAtlasWidgetView: View {
           Text("事件录")
             .font(.system(size: 14, weight: .semibold))
           Spacer(minLength: 0)
-          Text("\(todayLabel) · \(visibleEvents.count) 条")
+          Text("今天 · \(todayLabel) · \(visibleEvents.count) 条")
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(AtlasColor.muted)
         }
@@ -229,7 +229,7 @@ struct EventAtlasWidgetView: View {
           Text("事件录")
             .font(.system(size: 16, weight: .bold))
           Spacer(minLength: 0)
-          Text("\(todayLabel) · \(events.count) 条")
+          Text("今天 · \(todayLabel) · \(events.count) 条")
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(AtlasColor.muted)
         }
