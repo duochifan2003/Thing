@@ -72,6 +72,27 @@ void main() {
     expect(decoded.customTags, ['长期项目', '厦门']);
   });
 
+  test('keeps person and event tag catalogs separate', () {
+    final decoded = Archive.decode(
+      Archive(
+        people: const [],
+        events: const [],
+        personTags: const ['家人'],
+        eventTags: const ['旅行'],
+      ).encode(),
+    );
+
+    expect(decoded.personTags, ['家人']);
+    expect(decoded.eventTags, ['旅行']);
+    expect(decoded.allTagCatalog, ['家人', '旅行']);
+
+    final legacy = Archive.decode(
+      '{"version":2,"people":[],"events":[],"customTags":["旧标签"],"revisions":[]}',
+    );
+    expect(legacy.effectivePersonTags, ['旧标签']);
+    expect(legacy.effectiveEventTags, ['旧标签']);
+  });
+
   test('covers model labels, aliases, and copyWith branches', () {
     expect(Precision.values.map((value) => value.label).toList(), [
       '年份',

@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:person_event_atlas/event_location.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('separates a legacy Chinese place through district', () {
     final location = EventLocation.fromStored(
       '福建省厦门市海沧区',
@@ -99,5 +101,13 @@ void main() {
     expect(chinaRegions.citiesFor('不存在'), isEmpty);
     expect(chinaRegions.districtsFor('不存在', '厦门市'), isEmpty);
     expect(chinaRegions.districtsFor('福建省', '不存在'), isEmpty);
+  });
+
+  test('loads overseas states and cities from the bundled dataset', () async {
+    final regions = await WorldRegions.load();
+
+    expect(regions.statesFor('日本'), isNotEmpty);
+    expect(regions.stateFor('日本', 'Tokyo'), isNotNull);
+    expect(regions.citiesFor('日本', 'Tokyo'), contains('Hachioji'));
   });
 }

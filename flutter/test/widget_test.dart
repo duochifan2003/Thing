@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:person_event_atlas/app_settings.dart';
 import 'package:person_event_atlas/archive.dart';
 import 'package:person_event_atlas/archive_repository.dart';
+import 'package:person_event_atlas/event_location.dart';
 import 'package:person_event_atlas/main.dart';
 
 void main() {
@@ -18,6 +19,36 @@ void main() {
     expect(find.text('事件时间线'), findsOneWidget);
     expect(find.text('标签管理'), findsOneWidget);
     expect(find.text('设置'), findsOneWidget);
+  });
+
+  testWidgets('uses distinct semantic colors for event statuses', (
+    tester,
+  ) async {
+    final events = EventStatus.values
+        .map(
+          (status) => seedArchive.events.first.copyWith(
+            title: status.label,
+            tags: const [],
+            people: const [],
+            status: status,
+          ),
+        )
+        .toList();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TimelineList(events: events, people: const [], onOpen: (_) {}),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final chips = tester.widgetList<Chip>(find.byType(Chip)).toList();
+    expect(chips, hasLength(EventStatus.values.length));
+    expect(
+      chips.map((chip) => chip.backgroundColor).toSet(),
+      hasLength(EventStatus.values.length),
+    );
   });
 
   testWidgets('opens settings with data management and theme controls', (
@@ -37,6 +68,8 @@ void main() {
     expect(find.text('导入 JSON'), findsOneWidget);
     expect(find.text('导出 JSON'), findsOneWidget);
     expect(find.text('跟随系统'), findsOneWidget);
+    expect(find.byType(SegmentedButton<AppThemeMode>), findsOneWidget);
+    expect(find.byType(RadioListTile<AppThemeMode>), findsNothing);
     expect(find.text('森林绿'), findsOneWidget);
 
     await tester.tap(find.text('深色'));
@@ -62,8 +95,18 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byType(DropdownButtonFormField<Precision>));
+    await tester.tap(find.byType(MenuAnchor));
     await tester.pumpAndSettle();
+    final menu = tester.widget<MenuAnchor>(find.byType(MenuAnchor));
+    expect(menu.animated, isTrue);
+    expect(menu.style?.alignment, AlignmentDirectional.bottomStart);
+    expect(menu.style?.shape?.resolve({}), isA<RoundedRectangleBorder>());
+    expect(
+      tester.getTopLeft(find.text('年份').last).dy,
+      greaterThanOrEqualTo(
+        tester.getBottomLeft(find.byType(InputDecorator)).dy,
+      ),
+    );
     await tester.tap(find.text('月份').last);
     await tester.pumpAndSettle();
 
@@ -85,14 +128,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      tester
-          .widget<DropdownButtonFormField<Precision>>(
-            find.byType(DropdownButtonFormField<Precision>),
-          )
-          .initialValue,
-      Precision.month,
-    );
+    final editorMenus = tester.widgetList<MenuAnchor>(find.byType(MenuAnchor));
+    expect(editorMenus, isNotEmpty);
+    expect(editorMenus.every((menu) => menu.animated), isTrue);
+    expect(find.text(Precision.month.label), findsOneWidget);
+    expect(find.byType(Divider), findsNothing);
 
     final existing = seedArchive.events.first;
     await tester.pumpWidget(
@@ -109,66 +149,132 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      tester
-          .widget<DropdownButtonFormField<Precision>>(
-            find.byType(DropdownButtonFormField<Precision>),
-          )
-          .initialValue,
-      existing.precision,
-    );
+    expect(find.text(existing.precision.label), findsOneWidget);
   });
 
-  testWidgets('adds a custom tag from the tag page', (tester) async {
+  testWidgets('uses an animated anchored menu for detail actions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ArchiveDetail(
+            event: seedArchive.events.first.copyWith(
+              people: const <PersonLink>[],
+              previousEventIds: const <String>[],
+            ),
+            archive: seedArchive,
+            onClose: () {},
+            onPerson: (_) {},
+            onEvent: (_) {},
+            onEditPerson: (_) {},
+            onEditEvent: (_) {},
+            onDeletePerson: (_) {},
+            onDeleteEvent: (_) {},
+            onCancelEvent: (_) {},
+            onTransitionEvent: (_, _) {},
+            onPostponeEvent: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final menu = tester.widget<MenuAnchor>(find.byType(MenuAnchor));
+    expect(menu.animated, isTrue);
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('编辑'), findsOneWidget);
+  });
+
+  testWidgets('edits a person directly from the people grid', (tester) async {
+    Person? edited;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PeopleList(
+            people: seedArchive.people,
+            events: seedArchive.events,
+            onOpen: (_) {},
+            onEdit: (person) => edited = person,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('直接编辑').first);
+
+    expect(edited?.id, seedArchive.people.first.id);
+  });
+
+  testWidgets('adds a person tag from the tag page', (tester) async {
     List<String>? saved;
+    EntityType? savedType;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: CustomTagsPage(
-            customTags: const [],
+            personTags: const [],
+            eventTags: const [],
+            personCounts: const {},
             eventCounts: const {},
-            onChanged: (tags) async => saved = tags,
-            onDelete: (_) async {},
+            onChanged: (type, tags) async {
+              savedType = type;
+              saved = tags;
+            },
+            onDelete: (_, _) async {},
           ),
         ),
       ),
     );
 
-    await tester.enterText(find.byType(TextField), '长期项目');
-    await tester.tap(find.text('添加'));
+    await tester.enterText(find.byType(TextField).first, '长期项目');
+    await tester.tap(find.widgetWithText(FilledButton, '添加').first);
     await tester.pumpAndSettle();
 
     expect(saved, ['长期项目']);
+    expect(savedType, EntityType.person);
   });
 
-  testWidgets('shows only custom tags and deletes an unused tag', (
+  testWidgets('separates person and event tags on the tag page', (
     tester,
   ) async {
-    List<String>? saved;
+    EntityType? deletedType;
     String? deleted;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: CustomTagsPage(
-            customTags: const ['旧标签'],
-            eventCounts: const {'旧标签': 3},
-            onChanged: (tags) async => saved = tags,
-            onDelete: (tag) async => deleted = tag,
+            personTags: const ['人物标签'],
+            eventTags: const ['事件标签'],
+            personCounts: const {'人物标签': 2},
+            eventCounts: const {'事件标签': 3},
+            onChanged: (_, _) async {},
+            onDelete: (type, tag) async {
+              deletedType = type;
+              deleted = tag;
+            },
           ),
         ),
       ),
     );
 
     expect(find.text('预设标签'), findsNothing);
-    expect(find.text('#旧标签'), findsOneWidget);
-    expect(find.text('关联 3 个事件'), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.delete_outline));
+    expect(find.text('人物标签'), findsOneWidget);
+    expect(find.text('事件标签'), findsOneWidget);
+    expect(find.text('#人物标签'), findsOneWidget);
+    expect(find.text('#事件标签'), findsOneWidget);
+    expect(find.text('2 个人物'), findsOneWidget);
+    expect(find.text('3 个事件'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.delete_outline).last);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
     await tester.pumpAndSettle();
 
-    expect(deleted, '旧标签');
-    expect(saved, isNull);
+    expect(deletedType, EntityType.event);
+    expect(deleted, '事件标签');
   });
 
   testWidgets('uses bottom navigation on a narrow window', (tester) async {
@@ -191,6 +297,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('省级地区 *'), findsNothing);
+    expect(find.text('国家/地区 *'), findsOneWidget);
+    expect(find.text('请选择'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('国家/地区 *')).dy,
+      lessThan(tester.getTopLeft(find.text('请选择')).dy),
+    );
     await tester.tap(find.byKey(const ValueKey('country-null')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('中国').last);
@@ -200,6 +312,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('province-null')));
     await tester.tap(find.byKey(const ValueKey('province-null')));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('福建省').last);
     await tester.tap(find.text('福建省').last);
     await tester.pumpAndSettle();
 
@@ -222,13 +335,14 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.widgetWithText(FilledButton, '保存'));
-    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('请填写标题，并关联至少一位人物。'), findsOneWidget);
   });
 
   testWidgets('saves an event with an overseas location', (tester) async {
     EventItem? result;
+    await tester.runAsync(() => WorldRegions.load());
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
@@ -253,12 +367,42 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('country-null')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('日本').last);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, '保存'));
     await tester.pumpAndSettle();
 
     expect(result?.title, '海外访谈');
     expect(result?.status, EventStatus.scheduled);
     expect(result?.place, '日本');
+  });
+
+  testWidgets('shows overseas state and city selectors', (tester) async {
+    await tester.runAsync(() => WorldRegions.load());
+    await tester.pumpWidget(
+      MaterialApp(home: EventEditor(people: seedArchive.people)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('country-null')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('日本').last);
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.text('州/省级地区（可选）'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('province-null')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Tokyo').last);
+    await tester.tap(find.text('Tokyo').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('城市（可选）'), findsOneWidget);
   });
 }

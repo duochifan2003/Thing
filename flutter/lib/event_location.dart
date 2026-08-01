@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+
 import 'china_area_data.dart';
 
 const eventLocationCountries = <String>[
@@ -17,6 +21,102 @@ const eventLocationCountries = <String>[
   '澳大利亚',
   '新西兰',
 ];
+
+const eventLocationCountryCodes = <String, String>{
+  '中国': 'CN',
+  '日本': 'JP',
+  '韩国': 'KR',
+  '新加坡': 'SG',
+  '马来西亚': 'MY',
+  '泰国': 'TH',
+  '越南': 'VN',
+  '美国': 'US',
+  '加拿大': 'CA',
+  '英国': 'GB',
+  '法国': 'FR',
+  '德国': 'DE',
+  '意大利': 'IT',
+  '澳大利亚': 'AU',
+  '新西兰': 'NZ',
+};
+
+class WorldRegion {
+  const WorldRegion({required this.id, required this.name});
+
+  final String id;
+  final String name;
+}
+
+class WorldRegions {
+  const WorldRegions._(this._statesByCountryCode, this._citiesByStateId);
+
+  const WorldRegions.empty() : this._(const {}, const {});
+
+  final Map<String, List<WorldRegion>> _statesByCountryCode;
+  final Map<String, List<String>> _citiesByStateId;
+
+  static Future<WorldRegions>? _loading;
+  static WorldRegions? _cached;
+
+  static WorldRegions? get cached => _cached;
+
+  static Future<WorldRegions> load() => _loading ??= _load().then((regions) {
+    _cached = regions;
+    return regions;
+  });
+
+  static Future<WorldRegions> _load() async {
+    final countryRows = await _loadList('country.json');
+    final countryCodeById = <String, String>{
+      for (final row in countryRows)
+        row['id'].toString(): row['sortname'] as String,
+    };
+    final stateRows = await _loadList('state.json');
+    final statesByCountryCode = <String, List<WorldRegion>>{};
+    for (final row in stateRows) {
+      final countryCode = countryCodeById[row['country_id'].toString()];
+      if (countryCode == null) continue;
+      statesByCountryCode
+          .putIfAbsent(countryCode, () => [])
+          .add(
+            WorldRegion(id: row['id'].toString(), name: row['name'] as String),
+          );
+    }
+
+    final citiesByStateId = <String, List<String>>{};
+    for (final row in await _loadList('city.json')) {
+      citiesByStateId
+          .putIfAbsent(row['state_id'].toString(), () => [])
+          .add(row['name'] as String);
+    }
+    return WorldRegions._(statesByCountryCode, citiesByStateId);
+  }
+
+  static Future<List<Map<String, dynamic>>> _loadList(String name) async {
+    final bytes = await rootBundle.load(
+      'packages/country_state_city_pro/assets/$name',
+    );
+    final source = utf8.decode(
+      bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+    );
+    return (jsonDecode(source) as List)
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
+
+  List<WorldRegion> statesFor(String country) =>
+      _statesByCountryCode[eventLocationCountryCodes[country]] ?? const [];
+
+  WorldRegion? stateFor(String country, String state) => statesFor(
+    country,
+  ).where((candidate) => candidate.name == state).firstOrNull;
+
+  List<String> citiesFor(String country, String state) {
+    final region = stateFor(country, state);
+    return region == null ? const [] : _citiesByStateId[region.id] ?? const [];
+  }
+}
 
 class ChinaRegions {
   const ChinaRegions(this._provinces, this._cities, this._districts);
@@ -108,6 +208,7 @@ class EventLocation {
   static EventLocation fromStored(
     String value, {
     required ChinaRegions chinaRegions,
+    WorldRegions? worldRegions,
   }) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return const EventLocation();
@@ -119,6 +220,22 @@ class EventLocation {
     if (parts.isNotEmpty && eventLocationCountries.contains(parts.first)) {
       final country = parts.removeAt(0);
       if (country != '中国') {
+        final state = parts.isEmpty
+            ? null
+            : worldRegions?.stateFor(country, parts.first);
+        if (state != null) {
+          parts.removeAt(0);
+          final cities = worldRegions!.citiesFor(country, state.name);
+          final city = parts.isEmpty || !cities.contains(parts.first)
+              ? null
+              : parts.removeAt(0);
+          return EventLocation(
+            country: country,
+            province: state.name,
+            city: city,
+            detail: parts.join(' · '),
+          );
+        }
         return EventLocation(country: country, detail: parts.join(' · '));
       }
       return _fromChinaText(parts.join(''), chinaRegions);

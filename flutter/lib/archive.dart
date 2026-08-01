@@ -331,23 +331,42 @@ class Archive {
     required this.people,
     required this.events,
     this.customTags = const [],
+    this.personTags = const [],
+    this.eventTags = const [],
     this.revisions = const [],
   });
 
   final List<Person> people;
   final List<EventItem> events;
+
+  /// Legacy v2 catalog kept for older importers and databases.
   final List<String> customTags;
+  final List<String> personTags;
+  final List<String> eventTags;
   final List<Revision> revisions;
+
+  List<String> get effectivePersonTags =>
+      personTags.isEmpty && eventTags.isEmpty ? customTags : personTags;
+
+  List<String> get effectiveEventTags =>
+      personTags.isEmpty && eventTags.isEmpty ? customTags : eventTags;
+
+  List<String> get allTagCatalog =>
+      {...effectivePersonTags, ...effectiveEventTags}.toList();
 
   Archive copyWith({
     List<Person>? people,
     List<EventItem>? events,
     List<String>? customTags,
+    List<String>? personTags,
+    List<String>? eventTags,
     List<Revision>? revisions,
   }) => Archive(
     people: people ?? this.people,
     events: events ?? this.events,
     customTags: customTags ?? this.customTags,
+    personTags: personTags ?? this.personTags,
+    eventTags: eventTags ?? this.eventTags,
     revisions: revisions ?? this.revisions,
   );
 
@@ -355,7 +374,9 @@ class Archive {
     'version': 2,
     'people': people.map((person) => person.toJson()).toList(),
     'events': events.map((event) => event.toJson()).toList(),
-    'customTags': customTags,
+    'customTags': allTagCatalog,
+    'personTags': effectivePersonTags,
+    'eventTags': effectiveEventTags,
     'revisions': revisions.map((revision) => revision.toJson()).toList(),
   };
 
@@ -366,6 +387,7 @@ class Archive {
     if (json['version'] != 1 && json['version'] != 2) {
       throw const FormatException('不支持的档案版本。');
     }
+    final legacyTags = _archiveTags(json['customTags']);
     return Archive(
       people: (json['people'] as List)
           .map(
@@ -378,7 +400,13 @@ class Archive {
                 EventItem.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(),
-      customTags: (json['customTags'] as List? ?? []).cast<String>(),
+      customTags: legacyTags,
+      personTags: json.containsKey('personTags')
+          ? _archiveTags(json['personTags'])
+          : legacyTags,
+      eventTags: json.containsKey('eventTags')
+          ? _archiveTags(json['eventTags'])
+          : legacyTags,
       revisions: (json['revisions'] as List? ?? [])
           .map(
             (item) => Revision.fromJson(Map<String, dynamic>.from(item as Map)),
@@ -387,6 +415,9 @@ class Archive {
     );
   }
 }
+
+List<String> _archiveTags(Object? value) =>
+    value is List ? value.whereType<String>().toList() : const [];
 
 final seedArchive = Archive(
   people: [

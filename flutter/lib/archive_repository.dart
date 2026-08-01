@@ -97,10 +97,23 @@ class ArchiveRepository {
         .select('SELECT * FROM revisions ORDER BY at ASC')
         .map(_revisionFromRow)
         .toList();
+    final legacyTags = _metadataTags(database, 'custom_tags');
+    final personTags = _metadataTags(
+      database,
+      'person_tags',
+      fallback: legacyTags,
+    );
+    final eventTags = _metadataTags(
+      database,
+      'event_tags',
+      fallback: legacyTags,
+    );
     return Archive(
       people: people,
       events: events,
-      customTags: _customTags(database),
+      customTags: {...legacyTags, ...personTags, ...eventTags}.toList()..sort(),
+      personTags: personTags,
+      eventTags: eventTags,
       revisions: revisions,
     );
   }
@@ -164,24 +177,30 @@ class ArchiveRepository {
     });
   });
 
+  Future<void> savePersonTags(List<String> tags) =>
+      _saveTagCatalog('person_tags', tags);
+
+  Future<void> saveEventTags(List<String> tags) =>
+      _saveTagCatalog('event_tags', tags);
+
   Future<void> saveCustomTags(List<String> tags) => _serialize(() async {
     final database = await _open();
-    final normalized =
-        tags
-            .map((tag) => tag.trim())
-            .where((tag) => tag.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
-    _transaction(
-      database,
-      () => database.execute(
-        "INSERT INTO metadata (key, value) VALUES ('custom_tags', ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [jsonEncode(normalized)],
-      ),
-    );
+    final normalized = _normalizeTags(tags);
+    _transaction(database, () {
+      _writeMetadataTags(database, 'custom_tags', normalized);
+      _writeMetadataTags(database, 'person_tags', normalized);
+      _writeMetadataTags(database, 'event_tags', normalized);
+    });
   });
+
+  Future<void> _saveTagCatalog(String key, List<String> tags) =>
+      _serialize(() async {
+        final database = await _open();
+        _transaction(
+          database,
+          () => _writeMetadataTags(database, key, _normalizeTags(tags)),
+        );
+      });
 
   Future<void> saveEvent(EventItem event) => _serialize(() async {
     _validateEvent(event);
@@ -386,22 +405,45 @@ class ArchiveRepository {
     for (final revision in archive.revisions) {
       _writeRevision(database, revision);
     }
-    database.execute(
-      "INSERT INTO metadata (key, value) VALUES ('custom_tags', ?) "
-      "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      [jsonEncode(archive.customTags)],
-    );
+    final personTags = archive.effectivePersonTags;
+    final eventTags = archive.effectiveEventTags;
+    final allTags = {...personTags, ...eventTags}.toList()..sort();
+    _writeMetadataTags(database, 'custom_tags', allTags);
+    _writeMetadataTags(database, 'person_tags', personTags);
+    _writeMetadataTags(database, 'event_tags', eventTags);
   }
 
-  List<String> _customTags(Database database) {
-    final rows = database.select(
-      "SELECT value FROM metadata WHERE key = 'custom_tags'",
-    );
-    if (rows.isEmpty) return const [];
-    final value = jsonDecode(rows.single['value'] as String);
-    if (value is! List) return const [];
-    return value.whereType<String>().toList();
+  List<String> _metadataTags(
+    Database database,
+    String key, {
+    List<String> fallback = const [],
+  }) {
+    final rows = database.select('SELECT value FROM metadata WHERE key = ?', [
+      key,
+    ]);
+    if (rows.isEmpty) return fallback;
+    try {
+      final value = jsonDecode(rows.single['value'] as String);
+      return value is List ? value.whereType<String>().toList() : fallback;
+    } catch (_) {
+      return fallback;
+    }
   }
+
+  List<String> _normalizeTags(List<String> tags) =>
+      tags
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+
+  void _writeMetadataTags(Database database, String key, List<String> tags) =>
+      database.execute(
+        'INSERT INTO metadata (key, value) VALUES (?, ?) '
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+        [key, jsonEncode(_normalizeTags(tags))],
+      );
 
   void _writePerson(Database database, Person person) => database.execute(
     '''
