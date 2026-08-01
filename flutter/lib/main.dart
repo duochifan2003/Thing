@@ -1115,7 +1115,10 @@ class _Brand extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Image.asset('assets/logo.png', width: 34, height: 34),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.asset('assets/logo.png', width: 34, height: 34),
+      ),
       const SizedBox(width: 10),
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
