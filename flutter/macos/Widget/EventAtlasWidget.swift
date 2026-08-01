@@ -59,7 +59,14 @@ struct EventAtlasEntry: TimelineEntry {
 
 struct EventAtlasProvider: TimelineProvider {
   func placeholder(in context: Context) -> EventAtlasEntry {
-    EventAtlasEntry(date: .now, state: .content([ArchiveEvent(id: "preview", title: "社区影像计划启动", precision: "day", start: "2025-04-01", end: nil, place: "北仓社区")]))
+    EventAtlasEntry(date: .now, state: .content([
+      ArchiveEvent(id: "preview-1", title: "社区影像计划启动", precision: "day", start: "2025-04-01", end: nil, place: "北仓社区"),
+      ArchiveEvent(id: "preview-2", title: "口述史访谈", precision: "day", start: "2025-03-28", end: nil, place: "厦门市 · 海沧区"),
+      ArchiveEvent(id: "preview-3", title: "城市散步采集", precision: "day", start: "2025-03-18", end: nil, place: "厦门市 · 思明区"),
+      ArchiveEvent(id: "preview-4", title: "档案整理工作坊", precision: "day", start: "2025-03-11", end: nil, place: "厦门市 · 集美区"),
+      ArchiveEvent(id: "preview-5", title: "旧城照片征集", precision: "day", start: "2025-03-04", end: nil, place: "厦门市 · 湖里区"),
+      ArchiveEvent(id: "preview-6", title: "展览布置完成", precision: "day", start: "2025-02-26", end: nil, place: "厦门市"),
+    ]))
   }
 
   func getSnapshot(in context: Context, completion: @escaping (EventAtlasEntry) -> Void) {
