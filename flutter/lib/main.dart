@@ -177,6 +177,9 @@ Future<void> _updateWidget(Archive archive) async {
               'start': event.start,
               'end': event.end,
               'place': event.place,
+              'description': event.description,
+              'status': event.status.name,
+              'tags': event.tags,
             },
           )
           .toList(),
