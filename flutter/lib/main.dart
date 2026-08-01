@@ -168,7 +168,7 @@ Future<void> _updateWidget(Archive archive) async {
   try {
     await _widgetChannel.invokeMethod<void>('update', {
       'events': events
-          .take(3)
+          .take(6)
           .map(
             (event) => {
               'id': event.id,

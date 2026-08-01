@@ -107,7 +107,10 @@ struct EventAtlasWidgetView: View {
   }
 
   private var contentInsets: EdgeInsets {
-    family == .systemMedium
+    if family == .systemLarge {
+      return EdgeInsets(top: 18, leading: 20, bottom: 18, trailing: 20)
+    }
+    return family == .systemMedium
       ? EdgeInsets(top: 14, leading: 18, bottom: 14, trailing: 18)
       : EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
   }
@@ -137,6 +140,8 @@ struct EventAtlasWidgetView: View {
             .lineLimit(1)
         }
       }
+    } else if family == .systemLarge {
+      largeContent(events)
     } else {
       let visibleEvents = Array(events.prefix(3))
 
@@ -164,6 +169,33 @@ struct EventAtlasWidgetView: View {
     }
   }
 
+  private func largeContent(_ events: [ArchiveEvent]) -> some View {
+    let visibleEvents = Array(events.prefix(6))
+
+    return VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .firstTextBaseline) {
+        Text("事件录")
+          .font(.system(size: 16, weight: .bold))
+        Spacer(minLength: 0)
+        Text("最近 \(visibleEvents.count) 条")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(AtlasColor.muted)
+      }
+
+      Divider().overlay(AtlasColor.green.opacity(0.18))
+
+      VStack(alignment: .leading, spacing: 0) {
+        ForEach(Array(visibleEvents.enumerated()), id: \.element.id) { item in
+          largeEventRow(item.element)
+          if item.offset < visibleEvents.count - 1 {
+            Divider().padding(.leading, 82)
+          }
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+
   private func mediumEventRow(_ event: ArchiveEvent) -> some View {
     HStack(alignment: .center, spacing: 14) {
       dateBadge(event)
@@ -182,6 +214,27 @@ struct EventAtlasWidgetView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .frame(height: 32, alignment: .top)
+  }
+
+  private func largeEventRow(_ event: ArchiveEvent) -> some View {
+    HStack(alignment: .top, spacing: 14) {
+      dateBadge(event)
+        .padding(.top, 3)
+      VStack(alignment: .leading, spacing: 3) {
+        Text(event.title)
+          .font(.system(size: 14, weight: .semibold))
+          .lineLimit(1)
+        if let place = event.widgetPlaceLabel {
+          Text(place)
+            .font(.system(size: 11))
+            .foregroundStyle(AtlasColor.muted)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(.vertical, 7)
   }
 
   private func dateBadge(_ event: ArchiveEvent) -> some View {
@@ -218,9 +271,9 @@ struct EventAtlasWidget: Widget {
   var body: some WidgetConfiguration {
     StaticConfiguration(kind: kind, provider: EventAtlasProvider()) { EventAtlasWidgetView(entry: $0) }
       .configurationDisplayName("最近更新")
-      .description("显示最近编辑的事件记录。")
+      .description("显示最近编辑的事件记录；大组件可显示六条。")
       .contentMarginsDisabled()
-      .supportedFamilies([.systemSmall, .systemMedium])
+      .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
   }
 }
 
