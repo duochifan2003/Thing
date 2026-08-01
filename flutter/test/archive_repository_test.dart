@@ -49,6 +49,24 @@ void main() {
     expect((await repository.load()).customTags, ['厦门', '长期项目']);
   });
 
+  test('persists person and event tag catalogs separately', () async {
+    await repository.replace(
+      Archive(
+        people: const [],
+        events: const [],
+        personTags: const ['家人'],
+        eventTags: const ['旅行'],
+      ),
+    );
+    await repository.savePersonTags(['家人', '同事']);
+    await repository.saveEventTags(['旅行']);
+
+    final loaded = await repository.load();
+    expect(loaded.personTags, ['同事', '家人']);
+    expect(loaded.eventTags, ['旅行']);
+    expect(loaded.customTags, ['同事', '家人', '旅行']);
+  });
+
   test('loads default settings and persists settings in metadata', () async {
     expect((await repository.loadSettings()).themeMode, AppThemeMode.system);
     expect(
