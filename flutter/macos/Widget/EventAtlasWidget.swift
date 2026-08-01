@@ -20,14 +20,19 @@ struct ArchiveEvent: Codable, Identifiable {
   let start: String
   let end: String?
   let place: String
+  let description: String?
+  let status: String?
+  let tags: [String]?
 
   var dateLabel: String {
+    guard !start.isEmpty else { return "待定" }
     let format: (String) -> String = { $0.replacingOccurrences(of: "-", with: ".") }
     let formattedEnd = end.flatMap { $0.isEmpty ? nil : format($0) }
     return precision == "range" ? "\(format(start)) — \(formattedEnd ?? "至今")" : format(start)
   }
 
   var widgetDateLabel: String {
+    guard !start.isEmpty else { return "待定" }
     let formattedStart = start.replacingOccurrences(of: "-", with: ".")
     return precision == "range" ? "\(formattedStart)—" : formattedStart
   }
@@ -49,6 +54,40 @@ struct ArchiveEvent: Codable, Identifiable {
     }
     return administrativeParts.suffix(2).joined(separator: " · ")
   }
+
+  var widgetDescription: String? {
+    guard let description = description?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !description.isEmpty else { return nil }
+    return description
+  }
+
+  var widgetTagLabel: String? {
+    let labels = (tags ?? [])
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    guard !labels.isEmpty else { return nil }
+    return labels.prefix(2).joined(separator: " · ")
+  }
+
+  var statusLabel: String {
+    switch status {
+    case "scheduled": return "预定"
+    case "active": return "进行中"
+    case "completed": return "已结束"
+    case "cancelled": return "已取消"
+    default: return "事件"
+    }
+  }
+
+  var statusColor: Color {
+    switch status {
+    case "scheduled": return Color(red: 164 / 255, green: 90 / 255, blue: 16 / 255)
+    case "active": return Color(red: 36 / 255, green: 91 / 255, blue: 145 / 255)
+    case "completed": return Color(red: 75 / 255, green: 94 / 255, blue: 112 / 255)
+    case "cancelled": return Color(red: 166 / 255, green: 62 / 255, blue: 76 / 255)
+    default: return AtlasColor.green
+    }
+  }
 }
 
 struct EventAtlasEntry: TimelineEntry {
@@ -60,12 +99,12 @@ struct EventAtlasEntry: TimelineEntry {
 struct EventAtlasProvider: TimelineProvider {
   func placeholder(in context: Context) -> EventAtlasEntry {
     EventAtlasEntry(date: .now, state: .content([
-      ArchiveEvent(id: "preview-1", title: "社区影像计划启动", precision: "day", start: "2025-04-01", end: nil, place: "北仓社区"),
-      ArchiveEvent(id: "preview-2", title: "口述史访谈", precision: "day", start: "2025-03-28", end: nil, place: "厦门市 · 海沧区"),
-      ArchiveEvent(id: "preview-3", title: "城市散步采集", precision: "day", start: "2025-03-18", end: nil, place: "厦门市 · 思明区"),
-      ArchiveEvent(id: "preview-4", title: "档案整理工作坊", precision: "day", start: "2025-03-11", end: nil, place: "厦门市 · 集美区"),
-      ArchiveEvent(id: "preview-5", title: "旧城照片征集", precision: "day", start: "2025-03-04", end: nil, place: "厦门市 · 湖里区"),
-      ArchiveEvent(id: "preview-6", title: "展览布置完成", precision: "day", start: "2025-02-26", end: nil, place: "厦门市"),
+      ArchiveEvent(id: "preview-1", title: "社区影像计划启动", precision: "day", start: "2025-04-01", end: nil, place: "北仓社区", description: "整理社区老照片与口述史，建立可持续更新的影像档案。", status: "active", tags: ["社区", "影像"]),
+      ArchiveEvent(id: "preview-2", title: "口述史访谈", precision: "day", start: "2025-03-28", end: nil, place: "厦门市 · 海沧区", description: nil, status: "completed", tags: ["访谈"]),
+      ArchiveEvent(id: "preview-3", title: "城市散步采集", precision: "day", start: "2025-03-18", end: nil, place: "厦门市 · 思明区", description: nil, status: "completed", tags: ["城市"]),
+      ArchiveEvent(id: "preview-4", title: "档案整理工作坊", precision: "day", start: "2025-03-11", end: nil, place: "厦门市 · 集美区", description: nil, status: "scheduled", tags: ["工作坊"]),
+      ArchiveEvent(id: "preview-5", title: "旧城照片征集", precision: "day", start: "2025-03-04", end: nil, place: "厦门市 · 湖里区", description: nil, status: "cancelled", tags: ["征集"]),
+      ArchiveEvent(id: "preview-6", title: "展览布置完成", precision: "day", start: "2025-02-26", end: nil, place: "厦门市", description: nil, status: "completed", tags: ["展览"]),
     ]))
   }
 
@@ -176,31 +215,76 @@ struct EventAtlasWidgetView: View {
     }
   }
 
-  private func largeContent(_ events: [ArchiveEvent]) -> some View {
-    let visibleEvents = Array(events.prefix(6))
+  @ViewBuilder private func largeContent(_ events: [ArchiveEvent]) -> some View {
+    if let featuredEvent = events.first {
+      let recentEvents = Array(events.dropFirst().prefix(5))
 
-    return VStack(alignment: .leading, spacing: 10) {
-      HStack(alignment: .firstTextBaseline) {
-        Text("事件录")
-          .font(.system(size: 16, weight: .bold))
-        Spacer(minLength: 0)
-        Text("最近 \(visibleEvents.count) 条")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(AtlasColor.muted)
-      }
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(alignment: .firstTextBaseline) {
+          Text("事件录")
+            .font(.system(size: 16, weight: .bold))
+          Spacer(minLength: 0)
+          Text("最近更新 · \(events.count) 条")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(AtlasColor.muted)
+        }
 
-      Divider().overlay(AtlasColor.green.opacity(0.18))
+        featuredEventCard(featuredEvent)
 
-      VStack(alignment: .leading, spacing: 0) {
-        ForEach(Array(visibleEvents.enumerated()), id: \.element.id) { item in
-          largeEventRow(item.element)
-          if item.offset < visibleEvents.count - 1 {
-            Divider().padding(.leading, 82)
+        if !recentEvents.isEmpty {
+          Text("其他最近更新")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(AtlasColor.muted)
+
+          VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(recentEvents.enumerated()), id: \.element.id) { item in
+              largeEventRow(item.element)
+              if item.offset < recentEvents.count - 1 {
+                Divider().padding(.leading, 82)
+              }
+            }
           }
         }
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    } else {
+      message("还没有事件", detail: "打开事件录后新建记录")
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+
+  private func featuredEventCard(_ event: ArchiveEvent) -> some View {
+    VStack(alignment: .leading, spacing: 7) {
+      HStack(alignment: .center) {
+        statusPill(event)
+        Spacer(minLength: 8)
+        Text(event.dateLabel)
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(AtlasColor.green)
+          .lineLimit(1)
+      }
+
+      Text(event.title)
+        .font(.system(size: 18, weight: .bold))
+        .lineLimit(2)
+
+      if let description = event.widgetDescription {
+        Text(description)
+          .font(.system(size: 11.5))
+          .foregroundStyle(AtlasColor.muted)
+          .lineLimit(2)
+      }
+
+      let details = [event.widgetPlaceLabel, event.widgetTagLabel].compactMap { $0 }.joined(separator: " · ")
+      if !details.isEmpty {
+        Text(details)
+          .font(.system(size: 10.5, weight: .medium))
+          .foregroundStyle(AtlasColor.muted)
+          .lineLimit(1)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(12)
+    .background(AtlasColor.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
   }
 
   private func mediumEventRow(_ event: ArchiveEvent) -> some View {
@@ -228,11 +312,16 @@ struct EventAtlasWidgetView: View {
       dateBadge(event)
         .padding(.top, 3)
       VStack(alignment: .leading, spacing: 3) {
-        Text(event.title)
-          .font(.system(size: 14, weight: .semibold))
-          .lineLimit(1)
-        if let place = event.widgetPlaceLabel {
-          Text(place)
+        HStack(spacing: 8) {
+          Text(event.title)
+            .font(.system(size: 13, weight: .semibold))
+            .lineLimit(1)
+          Spacer(minLength: 0)
+          statusPill(event)
+        }
+        let details = [event.widgetPlaceLabel, event.widgetTagLabel].compactMap { $0 }.joined(separator: " · ")
+        if !details.isEmpty {
+          Text(details)
             .font(.system(size: 11))
             .foregroundStyle(AtlasColor.muted)
             .lineLimit(1)
@@ -242,6 +331,16 @@ struct EventAtlasWidgetView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .padding(.vertical, 7)
+  }
+
+  private func statusPill(_ event: ArchiveEvent) -> some View {
+    Text(event.statusLabel)
+      .font(.system(size: 9.5, weight: .semibold))
+      .foregroundStyle(event.statusColor)
+      .lineLimit(1)
+      .padding(.horizontal, 7)
+      .padding(.vertical, 3)
+      .background(event.statusColor.opacity(0.12), in: Capsule())
   }
 
   private func dateBadge(_ event: ArchiveEvent) -> some View {
@@ -278,7 +377,7 @@ struct EventAtlasWidget: Widget {
   var body: some WidgetConfiguration {
     StaticConfiguration(kind: kind, provider: EventAtlasProvider()) { EventAtlasWidgetView(entry: $0) }
       .configurationDisplayName("最近更新")
-      .description("显示最近编辑的事件记录；大组件可显示六条。")
+      .description("显示最近编辑的事件记录；大组件会展示一条详细事件和五条近期记录。")
       .contentMarginsDisabled()
       .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
   }
