@@ -161,6 +161,11 @@ struct EventAtlasWidgetView: View {
       : EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
   }
 
+  private var todayLabel: String {
+    let date = Calendar.current.dateComponents([.year, .month, .day], from: entry.date)
+    return String(format: "%04d.%02d.%02d", date.year ?? 0, date.month ?? 0, date.day ?? 0)
+  }
+
   @ViewBuilder private func content(_ events: [ArchiveEvent]) -> some View {
     if family == .systemSmall, let event = events.first {
       VStack(alignment: .leading, spacing: 6) {
@@ -196,7 +201,7 @@ struct EventAtlasWidgetView: View {
           Text("事件录")
             .font(.system(size: 14, weight: .semibold))
           Spacer(minLength: 0)
-          Text("\(visibleEvents.count) 条")
+          Text("\(todayLabel) · \(visibleEvents.count) 条")
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(AtlasColor.muted)
         }
@@ -224,7 +229,7 @@ struct EventAtlasWidgetView: View {
           Text("事件录")
             .font(.system(size: 16, weight: .bold))
           Spacer(minLength: 0)
-          Text("最近更新 · \(events.count) 条")
+          Text("\(todayLabel) · \(events.count) 条")
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(AtlasColor.muted)
         }
