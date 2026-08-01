@@ -161,28 +161,37 @@ class _EditorDialog extends StatelessWidget {
 
 const _widgetChannel = MethodChannel('local.munch.eventatlas/widget');
 
+List<Map<String, dynamic>> widgetEventPayload(Archive archive) {
+  final events = [...archive.events]
+    ..sort((left, right) {
+      final date = right.start.compareTo(left.start);
+      if (date != 0) return date;
+      final updated = right.updatedAt.compareTo(left.updatedAt);
+      return updated != 0 ? updated : left.id.compareTo(right.id);
+    });
+  return events
+      .take(6)
+      .map(
+        (event) => {
+          'id': event.id,
+          'title': event.title,
+          'precision': event.precision.name,
+          'start': event.start,
+          'end': event.end,
+          'place': event.place,
+          'description': event.description,
+          'status': event.status.name,
+          'tags': event.tags,
+        },
+      )
+      .toList();
+}
+
 Future<void> _updateWidget(Archive archive) async {
   if (!Platform.isMacOS) return;
-  final events = [...archive.events]
-    ..sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
   try {
     await _widgetChannel.invokeMethod<void>('update', {
-      'events': events
-          .take(6)
-          .map(
-            (event) => {
-              'id': event.id,
-              'title': event.title,
-              'precision': event.precision.name,
-              'start': event.start,
-              'end': event.end,
-              'place': event.place,
-              'description': event.description,
-              'status': event.status.name,
-              'tags': event.tags,
-            },
-          )
-          .toList(),
+      'events': widgetEventPayload(archive),
     });
   } on PlatformException {
     // Running outside the macOS app has no WidgetKit channel.

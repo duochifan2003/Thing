@@ -7,6 +7,45 @@ import 'package:person_event_atlas/event_location.dart';
 import 'package:person_event_atlas/main.dart';
 
 void main() {
+  test('keeps widget events in date order despite later edits', () {
+    final event = seedArchive.events.first;
+    final payload = widgetEventPayload(
+      Archive(
+        people: const [],
+        events: [
+          event.copyWith(
+            title: 'older',
+            start: '2025-01-01',
+            updatedAt: DateTime(2030),
+          ),
+          event.copyWith(
+            title: 'same-date-older-edit',
+            start: '2025-03-01',
+            updatedAt: DateTime(2025, 1, 1),
+          ),
+          event.copyWith(
+            title: 'same-date-newer-edit',
+            start: '2025-03-01',
+            updatedAt: DateTime(2025, 1, 2),
+          ),
+          event.copyWith(
+            title: 'undated',
+            start: '',
+            updatedAt: DateTime(2040),
+            status: EventStatus.scheduled,
+          ),
+        ],
+      ),
+    );
+
+    expect(payload.map((event) => event['title']), [
+      'same-date-newer-edit',
+      'same-date-older-edit',
+      'older',
+      'undated',
+    ]);
+  });
+
   testWidgets('uses a navigation rail on a wide window', (tester) async {
     final repository = ArchiveRepository(databasePath: ':memory:');
     addTearDown(repository.close);
