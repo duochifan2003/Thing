@@ -73,12 +73,33 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath build/Thing-windows-${{ github.sha }}.zip
 
+      - name: Build Windows installer
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+            $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          }
+          if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler was not found.' }
+          $releaseTag = '${{ inputs.release_tag }}'
+          if ($releaseTag) {
+            $version = $releaseTag -replace '^v', ''
+          } else {
+            $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+' ).Matches.Groups[1].Value
+          }
+          & $iscc "/DAppVersion=$version" windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Upload Windows release artifact
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: Thing-windows-${{ github.sha }}
-          path: flutter/build/Thing-windows-${{ github.sha }}.zip
+          path: |
+            flutter/build/Thing-windows-${{ github.sha }}.zip
+            flutter/build/installer/Thing-windows-*-setup.exe
 
   windows-release:
     name: Upload Windows release
@@ -103,3 +124,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: gh release upload "$RELEASE_TAG" "release/Thing-windows-${{ inputs.release_tag }}.zip" --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Upload Windows installer to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" release/Thing-windows-*-setup.exe --repo "$GITHUB_REPOSITORY" --clobber
