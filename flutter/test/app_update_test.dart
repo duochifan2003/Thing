@@ -21,7 +21,7 @@ void main() {
 
       expect(requested?.host, 'api.github.com');
       expect(release?.version, '0.1.5');
-      expect(release?.assetFor('windows')?.name, 'EventAtlas-windows.zip');
+      expect(release?.assetFor('windows')?.name, 'Thing-windows.zip');
     },
   );
 
@@ -40,33 +40,32 @@ void main() {
   test('prefers a macOS DMG when both macOS package types exist', () {
     final release = AppUpdateRelease.fromJson(_releaseJson(macAssets: true));
 
-    expect(release.assetFor('macos')?.name, 'EventAtlas-macOS.dmg');
+    expect(release.assetFor('macos')?.name, 'Thing-macOS.dmg');
     expect(release.assetFor('android'), isNull);
   });
 }
 
 Map<String, dynamic> _releaseJson({bool macAssets = false}) => {
   'tag_name': 'v0.1.5',
-  'html_url':
-      'https://github.com/duochifan2003/person-event-atlas/releases/tag/v0.1.5',
+  'html_url': 'https://github.com/duochifan2003/Thing/releases/tag/v0.1.5',
   'body': '修复更新功能。',
   'assets': [
     {
-      'name': 'EventAtlas-windows.zip',
+      'name': 'Thing-windows.zip',
       'browser_download_url':
-          'https://github.com/duochifan2003/person-event-atlas/releases/download/v0.1.5/EventAtlas-windows.zip',
+          'https://github.com/duochifan2003/Thing/releases/download/v0.1.5/Thing-windows.zip',
     },
     if (macAssets)
       {
-        'name': 'EventAtlas-macOS.zip',
+        'name': 'Thing-macOS.zip',
         'browser_download_url':
-            'https://github.com/duochifan2003/person-event-atlas/releases/download/v0.1.5/EventAtlas-macOS.zip',
+            'https://github.com/duochifan2003/Thing/releases/download/v0.1.5/Thing-macOS.zip',
       },
     if (macAssets)
       {
-        'name': 'EventAtlas-macOS.dmg',
+        'name': 'Thing-macOS.dmg',
         'browser_download_url':
-            'https://github.com/duochifan2003/person-event-atlas/releases/download/v0.1.5/EventAtlas-macOS.dmg',
+            'https://github.com/duochifan2003/Thing/releases/download/v0.1.5/Thing-macOS.dmg',
       },
   ],
 };

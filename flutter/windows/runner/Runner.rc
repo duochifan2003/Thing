@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "Munch" "\0"
-            VALUE "FileDescription", "事件录" "\0"
+            VALUE "FileDescription", "Thing" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "person_event_atlas" "\0"
+            VALUE "InternalName", "Thing" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 Munch. All rights reserved." "\0"
-            VALUE "OriginalFilename", "person_event_atlas.exe" "\0"
-            VALUE "ProductName", "事件录" "\0"
+            VALUE "OriginalFilename", "Thing.exe" "\0"
+            VALUE "ProductName", "Thing" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

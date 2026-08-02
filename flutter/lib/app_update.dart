@@ -4,11 +4,11 @@ import 'dart:io' as io;
 
 import 'package:path/path.dart' as path;
 
-const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.1.5');
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '28');
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.1.6');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '29');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
-const _repository = 'duochifan2003/person-event-atlas';
+const _repository = 'duochifan2003/Thing';
 const _latestReleaseUri =
     'https://api.github.com/repos/$_repository/releases/latest';
 
@@ -145,9 +145,7 @@ class AppUpdateService {
       throw const AppUpdateException('当前系统暂不支持自动安装更新。');
     }
 
-    final temporary = await io.Directory.systemTemp.createTemp(
-      'event-atlas-update-',
-    );
+    final temporary = await io.Directory.systemTemp.createTemp('thing-update-');
     final archive = io.File(
       path.join(temporary.path, _safeFileName(asset.name)),
     );
@@ -162,7 +160,7 @@ class AppUpdateService {
   }
 
   Future<String> _fetchLatestRelease(Uri uri) async {
-    final client = io.HttpClient()..userAgent = 'EventAtlas/$currentVersion';
+    final client = io.HttpClient()..userAgent = 'Thing/$currentVersion';
     try {
       final request = await client.getUrl(uri);
       request.headers.set(
@@ -194,7 +192,7 @@ class AppUpdateService {
     io.File destination,
     UpdateProgress? onProgress,
   ) async {
-    final client = io.HttpClient()..userAgent = 'EventAtlas/$currentVersion';
+    final client = io.HttpClient()..userAgent = 'Thing/$currentVersion';
     io.IOSink? sink;
     try {
       final request = await client.getUrl(uri);
@@ -288,12 +286,18 @@ $ExtractDirectory = Join-Path $env:TEMP ("event-atlas-update-" + $ProcessId)
 Remove-Item $ExtractDirectory -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $ExtractDirectory -ItemType Directory -Force | Out-Null
 Expand-Archive -LiteralPath $Archive -DestinationPath $ExtractDirectory -Force
-$SourceExecutable = Get-ChildItem $ExtractDirectory -Filter $ExecutableName -File -Recurse | Select-Object -First 1
+$SourceExecutable = Get-ChildItem $ExtractDirectory -Filter "*.exe" -File -Recurse |
+  Sort-Object @{ Expression = { $_.Name -ne $ExecutableName } }, FullName |
+  Select-Object -First 1
 if ($null -eq $SourceExecutable) { throw "更新包中没有找到应用程序。" }
+$InstalledExecutableName = $SourceExecutable.Name
 Copy-Item (Join-Path $SourceExecutable.Directory.FullName "*") $TargetDirectory -Recurse -Force
+if ($ExecutableName -ne $InstalledExecutableName) {
+  Remove-Item (Join-Path $TargetDirectory $ExecutableName) -Force -ErrorAction SilentlyContinue
+}
 Remove-Item $Archive -Force -ErrorAction SilentlyContinue
 Remove-Item $ExtractDirectory -Recurse -Force -ErrorAction SilentlyContinue
-Start-Process (Join-Path $TargetDirectory $ExecutableName)
+Start-Process (Join-Path $TargetDirectory $InstalledExecutableName)
 Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
 ''');
     await io.Process.start('powershell.exe', [
