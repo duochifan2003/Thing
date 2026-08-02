@@ -172,6 +172,11 @@ class AppUpdateService {
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
       if (response.statusCode != io.HttpStatus.ok) {
+        if (response.statusCode == io.HttpStatus.notFound) {
+          throw const AppUpdateException(
+            '无法读取 GitHub 更新源。仓库可能是私有的，请公开仓库或配置访问令牌。',
+          );
+        }
         throw AppUpdateException('GitHub 更新检查失败（HTTP ${response.statusCode}）。');
       }
       return body;
