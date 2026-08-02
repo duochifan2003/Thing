@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag to receive the Windows ZIP
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -63,13 +69,34 @@ jobs:
         run: flutter build windows --release
 
       - name: Package Windows release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath build/EventAtlas-windows-${{ github.sha }}.zip
 
       - name: Upload Windows release artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: EventAtlas-windows-${{ github.sha }}
           path: flutter/build/EventAtlas-windows-${{ github.sha }}.zip
+
+  windows-release:
+    name: Upload Windows release
+    if: github.event_name == 'workflow_dispatch'
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: EventAtlas-windows-${{ github.sha }}
+          path: release
+
+      - name: Upload Windows package to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" "release/EventAtlas-windows-${{ github.sha }}.zip" --repo "$GITHUB_REPOSITORY" --clobber
