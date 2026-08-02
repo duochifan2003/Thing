@@ -161,6 +161,7 @@ class _EditorDialog extends StatelessWidget {
 }
 
 const _widgetChannel = MethodChannel('local.munch.eventatlas/widget');
+const _syncAccessChannel = MethodChannel('local.munch.eventatlas/sync-access');
 
 List<Map<String, dynamic>> widgetEventPayload(Archive archive) {
   final events = [...archive.events]
@@ -231,10 +232,53 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
   Future<void> _loadSettings() async {
     try {
       _settings = await _repository.loadSettings();
+      await _restoreSyncDirectoryAccess();
     } catch (_) {
       _settings = AppSettings.defaults;
     }
     if (mounted) setState(() => _ready = true);
+  }
+
+  Future<void> _restoreSyncDirectoryAccess() async {
+    if (!Platform.isMacOS ||
+        !_settings.syncEnabled ||
+        _settings.syncDirectoryBookmark == null) {
+      return;
+    }
+    try {
+      final restored = await _syncAccessChannel.invokeMapMethod<String, String>(
+        'startBookmark',
+        _settings.syncDirectoryBookmark,
+      );
+      final directory = restored?['path'];
+      final bookmark = restored?['bookmark'];
+      if (directory == null || bookmark == null) {
+        throw PlatformException(code: 'invalid_sync_bookmark');
+      }
+      final next = _settings.copyWith(
+        syncDirectory: directory,
+        syncDirectoryBookmark: bookmark,
+      );
+      if (next.syncDirectory != _settings.syncDirectory ||
+          next.syncDirectoryBookmark != _settings.syncDirectoryBookmark) {
+        _settings = next;
+        await _repository.saveSettings(next);
+      }
+    } on PlatformException catch (_) {
+      await _clearSyncDirectoryBookmark();
+    } on MissingPluginException {
+      await _clearSyncDirectoryBookmark();
+    }
+  }
+
+  Future<void> _clearSyncDirectoryBookmark() async {
+    final next = _settings.copyWith(clearSyncDirectoryBookmark: true);
+    _settings = next;
+    try {
+      await _repository.saveSettings(next);
+    } catch (_) {
+      // The settings page will still ask for the directory again this run.
+    }
   }
 
   Future<void> _saveSettings(AppSettings next) async {
@@ -548,7 +592,9 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   void didUpdateWidget(covariant ArchiveHome oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.settings.syncEnabled != widget.settings.syncEnabled ||
-        oldWidget.settings.syncDirectory != widget.settings.syncDirectory) {
+        oldWidget.settings.syncDirectory != widget.settings.syncDirectory ||
+        oldWidget.settings.syncDirectoryBookmark !=
+            widget.settings.syncDirectoryBookmark) {
       unawaited(_configureSync());
     }
     if (oldWidget.settings.trashRetention != widget.settings.trashRetention) {
@@ -588,6 +634,17 @@ class _ArchiveHomeState extends State<ArchiveHome> {
         directory.isEmpty) {
       if (!mounted) return;
       setState(() {});
+      return;
+    }
+    if (Platform.isMacOS && widget.settings.syncDirectoryBookmark == null) {
+      if (mounted) {
+        setState(
+          () => _syncMetadata = const SyncMetadata(
+            status: '需要重新选择同步目录',
+            error: 'macOS 需要重新选择同步目录以恢复访问权限。',
+          ),
+        );
+      }
       return;
     }
     try {
@@ -1041,12 +1098,31 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     try {
       final directory = await getDirectoryPath(confirmButtonText: '选择同步目录');
       if (directory == null || !mounted) return;
+      String? bookmark;
+      if (Platform.isMacOS) {
+        bookmark = await _syncAccessChannel.invokeMethod<String>(
+          'createBookmark',
+          directory,
+        );
+        if (bookmark == null || bookmark.isEmpty) {
+          throw PlatformException(code: 'invalid_sync_bookmark');
+        }
+      }
       final save = widget.onSettingsChanged;
       if (save == null) return;
       await save(
-        widget.settings.copyWith(syncDirectory: directory, syncEnabled: true),
+        widget.settings.copyWith(
+          syncDirectory: directory,
+          syncDirectoryBookmark: bookmark,
+          clearSyncDirectoryBookmark: !Platform.isMacOS,
+          syncEnabled: true,
+        ),
       );
       if (mounted) _notice('同步目录已保存。');
+    } on PlatformException catch (_) {
+      if (mounted) _notice('无法保存 macOS 同步目录权限，请重新选择。');
+    } on MissingPluginException {
+      if (mounted) _notice('当前 macOS 版本不支持持久化同步目录权限。');
     } catch (_) {
       if (mounted) _notice('无法选择同步目录。');
     }
@@ -3101,7 +3177,10 @@ class SettingsPage extends StatelessWidget {
             ),
             value: settings.syncEnabled,
             onChanged: (enabled) {
-              if (enabled && directory == null) {
+              if (enabled &&
+                  (directory == null ||
+                      (Platform.isMacOS &&
+                          settings.syncDirectoryBookmark == null))) {
                 unawaited(chooseDirectory());
               } else {
                 _change(settings.copyWith(syncEnabled: enabled));

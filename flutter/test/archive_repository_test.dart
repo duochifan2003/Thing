@@ -88,6 +88,8 @@ void main() {
       themeMode: AppThemeMode.dark,
       primaryColor: AppPrimaryColor.oceanBlue,
       defaultPrecision: Precision.range,
+      syncDirectory: '/tmp/shared',
+      syncDirectoryBookmark: 'bookmark-data',
     );
     await repository.saveSettings(settings);
 
@@ -95,6 +97,8 @@ void main() {
     expect(loaded.themeMode, AppThemeMode.dark);
     expect(loaded.primaryColor, AppPrimaryColor.oceanBlue);
     expect(loaded.defaultPrecision, Precision.range);
+    expect(loaded.syncDirectory, '/tmp/shared');
+    expect(loaded.syncDirectoryBookmark, 'bookmark-data');
   });
 
   test('round-trips every color pairing in local settings', () async {

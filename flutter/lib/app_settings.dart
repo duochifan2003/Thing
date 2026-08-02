@@ -101,6 +101,7 @@ class AppSettings {
     this.defaultPrecision = Precision.day,
     this.syncEnabled = false,
     this.syncDirectory,
+    this.syncDirectoryBookmark,
     this.trashRetention = TrashRetention.thirtyDays,
   });
 
@@ -109,6 +110,7 @@ class AppSettings {
   final Precision defaultPrecision;
   final bool syncEnabled;
   final String? syncDirectory;
+  final String? syncDirectoryBookmark;
   final TrashRetention trashRetention;
 
   static const defaults = AppSettings();
@@ -120,6 +122,8 @@ class AppSettings {
     bool? syncEnabled,
     String? syncDirectory,
     bool clearSyncDirectory = false,
+    String? syncDirectoryBookmark,
+    bool clearSyncDirectoryBookmark = false,
     TrashRetention? trashRetention,
   }) => AppSettings(
     themeMode: themeMode ?? this.themeMode,
@@ -129,6 +133,9 @@ class AppSettings {
     syncDirectory: clearSyncDirectory
         ? null
         : syncDirectory ?? this.syncDirectory,
+    syncDirectoryBookmark: clearSyncDirectoryBookmark
+        ? null
+        : syncDirectoryBookmark ?? this.syncDirectoryBookmark,
     trashRetention: trashRetention ?? this.trashRetention,
   );
 
@@ -138,6 +145,7 @@ class AppSettings {
     'defaultPrecision': defaultPrecision.name,
     'syncEnabled': syncEnabled,
     'syncDirectory': syncDirectory,
+    'syncDirectoryBookmark': syncDirectoryBookmark,
     'trashRetention': trashRetention.name,
   };
 
@@ -158,6 +166,11 @@ class AppSettings {
           json['syncDirectory'] is String &&
               (json['syncDirectory'] as String).trim().isNotEmpty
           ? (json['syncDirectory'] as String)
+          : null,
+      syncDirectoryBookmark:
+          json['syncDirectoryBookmark'] is String &&
+              (json['syncDirectoryBookmark'] as String).trim().isNotEmpty
+          ? (json['syncDirectoryBookmark'] as String)
           : null,
       trashRetention: _trashRetention(json['trashRetention']),
     );
