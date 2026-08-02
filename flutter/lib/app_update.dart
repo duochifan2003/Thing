@@ -4,8 +4,8 @@ import 'dart:io' as io;
 
 import 'package:path/path.dart' as path;
 
-const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.1.6');
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '29');
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.1.9');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '32');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -250,8 +250,14 @@ trap cleanup EXIT
 hdiutil attach -nobrowse -readonly -mountpoint "\$MOUNT_POINT" "\$ARCHIVE" >/dev/null
 SOURCE_APP="\$(find "\$MOUNT_POINT" -maxdepth 1 -name '*.app' -print -quit)"
 if [ -z "\$SOURCE_APP" ]; then exit 1; fi
-rm -rf "\$TARGET_APP"
-ditto "\$SOURCE_APP" "\$TARGET_APP"
+/usr/bin/osascript - "\$SOURCE_APP" "\$TARGET_APP" <<'APPLESCRIPT'
+on run argv
+  set sourceApp to item 1 of argv
+  set targetApp to item 2 of argv
+  set installCommand to "/bin/rm -rf " & quoted form of targetApp & " && /usr/bin/ditto " & quoted form of sourceApp & " " & quoted form of targetApp
+  do shell script installCommand with administrator privileges
+end run
+APPLESCRIPT
 open "\$TARGET_APP"
 ''');
     await io.Process.run('chmod', ['+x', script.path]);
@@ -279,6 +285,21 @@ param(
   [string]$ExecutableName
 )
 $ErrorActionPreference = "Stop"
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($identity)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  $argumentList = @(
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', ('"{0}"' -f $PSCommandPath),
+    '-ProcessId', $ProcessId,
+    '-Archive', ('"{0}"' -f $Archive),
+    '-TargetDirectory', ('"{0}"' -f $TargetDirectory),
+    '-ExecutableName', ('"{0}"' -f $ExecutableName)
+  ) -join ' '
+  Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argumentList | Out-Null
+  exit
+}
 while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
   Start-Sleep -Milliseconds 500
 }

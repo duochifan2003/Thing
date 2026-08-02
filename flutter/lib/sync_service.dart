@@ -105,16 +105,14 @@ class SyncService {
       );
       final file = File(path.join(directory, fileName));
       SyncEnvelope? remote;
-      if (await file.exists()) {
-        try {
-          remote = SyncEnvelope.decode(await file.readAsString());
-        } on FormatException catch (error) {
-          return _failed('同步文件无法读取：${error.message}');
-        } on FileSystemException catch (error) {
-          return _failed('同步文件无法读取：${error.message}');
-        } catch (_) {
-          return _failed('同步文件无法读取。');
-        }
+      try {
+        remote = await _readRemote(file);
+      } on FormatException catch (error) {
+        return _failed('同步文件无法读取：${error.message}');
+      } on FileSystemException catch (error) {
+        return _failed('同步文件无法读取：${error.message}');
+      } catch (_) {
+        return _failed('同步文件无法读取。');
       }
 
       final previous = await repository.loadSyncMetadata();
@@ -252,9 +250,34 @@ class SyncService {
     try {
       await temporary.rename(target.path);
     } on FileSystemException {
-      if (await target.exists()) await target.delete();
-      await temporary.rename(target.path);
+      await temporary.copy(target.path);
+      await temporary.delete();
     }
+  }
+
+  Future<SyncEnvelope?> _readRemote(File file) async {
+    const retryDelays = [
+      Duration.zero,
+      Duration(milliseconds: 200),
+      Duration(milliseconds: 500),
+      Duration(seconds: 1),
+    ];
+    Object? lastError;
+    for (var attempt = 0; attempt < retryDelays.length; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(retryDelays[attempt]);
+      }
+      try {
+        if (!await file.exists()) continue;
+        return SyncEnvelope.decode(await file.readAsString());
+      } on FormatException catch (error) {
+        lastError = error;
+      } on FileSystemException catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError != null) throw lastError;
+    return null;
   }
 
   Future<SyncReport> _failed(String message) async {

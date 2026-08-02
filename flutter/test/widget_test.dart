@@ -63,6 +63,47 @@ void main() {
     expect(find.text('设置'), findsOneWidget);
   });
 
+  testWidgets('opens an event as a full-page detail on wide windows', (
+    tester,
+  ) async {
+    final repository = ArchiveRepository(databasePath: ':memory:');
+    addTearDown(repository.close);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await repository.savePerson(seedArchive.people.first);
+    await repository.saveEvent(seedArchive.events.first);
+
+    await tester.binding.setSurfaceSize(const Size(1100, 800));
+    await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(seedArchive.events.first.title));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ArchiveDetail), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('detail-expansion-animation')),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('返回'), findsOneWidget);
+    expect(find.byTooltip('关闭'), findsNothing);
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('编辑'));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑事件'), findsOneWidget);
+    expect(find.text('基本信息'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '保存修改'), findsOneWidget);
+
+    await tester.tap(find.text('取消编辑'));
+    await tester.pumpAndSettle();
+    expect(find.text('事件详情'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('返回'));
+    await tester.pumpAndSettle();
+    expect(find.text('事件时间线'), findsOneWidget);
+  });
+
   testWidgets('uses distinct semantic colors for event statuses', (
     tester,
   ) async {
@@ -113,13 +154,24 @@ void main() {
     expect(find.byType(SegmentedButton<AppThemeMode>), findsOneWidget);
     expect(find.byType(RadioListTile<AppThemeMode>), findsNothing);
     expect(find.text('森林绿'), findsOneWidget);
+    expect(find.text('莓红 · 燕麦色'), findsOneWidget);
+    expect(find.text('薄荷绿 · 炭灰色'), findsOneWidget);
+    expect(find.text('宝蓝 · 明黄'), findsOneWidget);
+    expect(find.text('亮橙 · 深青色'), findsOneWidget);
+    expect(find.text('奶油白 · 草木绿'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('primary-berryRedOat')));
+    await tester.pumpAndSettle();
+    final paletteApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(paletteApp.theme?.colorScheme.primary, const Color(0xffb50031));
+    expect(paletteApp.theme?.colorScheme.secondary, const Color(0xffdac9b1));
 
     await tester.tap(find.text('深色'));
     await tester.pumpAndSettle();
 
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.themeMode, ThemeMode.dark);
-    expect(app.darkTheme?.colorScheme.primary, const Color(0xff55c596));
+    expect(app.darkTheme?.colorScheme.primary, const Color(0xffb50031));
   });
 
   testWidgets('changes the new event precision preference', (tester) async {
@@ -248,7 +300,9 @@ void main() {
             onPerson: (_) {},
             onEvent: (_) {},
             onEditPerson: (_) {},
-            onEditEvent: (_) {},
+            onStartEventEdit: () {},
+            onCancelEventEdit: () {},
+            onSaveEvent: (_) async {},
             onDeletePerson: (_) {},
             onDeleteEvent: (_) {},
             onCancelEvent: (_) {},
