@@ -40,6 +40,15 @@ void main() {
     },
   );
 
+  test('starts a new database without sample archive data', () async {
+    final loaded = await repository.load();
+
+    expect(loaded.people, isEmpty);
+    expect(loaded.events, isEmpty);
+    expect(loaded.revisions, isEmpty);
+    expect(loaded.customTags, isEmpty);
+  });
+
   test('persists custom tags in metadata', () async {
     await repository.replace(
       Archive(people: const [], events: const [], customTags: const ['旧标签']),

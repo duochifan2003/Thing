@@ -70,16 +70,6 @@ class ArchiveRepository {
       _createRelationsTable(database);
     }
     _database = database;
-    if (database
-        .select("SELECT value FROM metadata WHERE key = 'initialized'")
-        .isEmpty) {
-      _transaction(database, () {
-        _replaceArchive(database, seedArchive);
-        database.execute(
-          "INSERT INTO metadata (key, value) VALUES ('initialized', 'true')",
-        );
-      });
-    }
     return database;
   }
 

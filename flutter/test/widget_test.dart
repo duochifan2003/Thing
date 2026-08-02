@@ -6,6 +6,8 @@ import 'package:person_event_atlas/archive_repository.dart';
 import 'package:person_event_atlas/event_location.dart';
 import 'package:person_event_atlas/main.dart';
 
+import 'test_data.dart';
+
 void main() {
   test('keeps widget events in date order despite later edits', () {
     final event = seedArchive.events.first;
