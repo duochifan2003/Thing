@@ -129,4 +129,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" release/Thing-windows-*-setup.exe --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$RELEASE_TAG" release/installer/Thing-windows-*-setup.exe --repo "$GITHUB_REPOSITORY" --clobber
