@@ -4,8 +4,11 @@ import 'dart:io' as io;
 
 import 'package:path/path.dart' as path;
 
-const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.1.9');
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '32');
+const appVersion = String.fromEnvironment(
+  'APP_VERSION',
+  defaultValue: '0.1.10',
+);
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '33');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -277,52 +280,12 @@ open "\$TARGET_APP"
     final targetDirectory = path.dirname(executable);
     final executableName = path.basename(executable);
     final script = io.File(path.join(temporary.path, 'install-update.ps1'));
-    await script.writeAsString(r'''
-param(
-  [int]$ProcessId,
-  [string]$Archive,
-  [string]$TargetDirectory,
-  [string]$ExecutableName
-)
-$ErrorActionPreference = "Stop"
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal($identity)
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  $argumentList = @(
-    '-NoProfile',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', ('"{0}"' -f $PSCommandPath),
-    '-ProcessId', $ProcessId,
-    '-Archive', ('"{0}"' -f $Archive),
-    '-TargetDirectory', ('"{0}"' -f $TargetDirectory),
-    '-ExecutableName', ('"{0}"' -f $ExecutableName)
-  ) -join ' '
-  Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argumentList | Out-Null
-  exit
-}
-while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
-  Start-Sleep -Milliseconds 500
-}
-$ExtractDirectory = Join-Path $env:TEMP ("event-atlas-update-" + $ProcessId)
-Remove-Item $ExtractDirectory -Recurse -Force -ErrorAction SilentlyContinue
-New-Item $ExtractDirectory -ItemType Directory -Force | Out-Null
-Expand-Archive -LiteralPath $Archive -DestinationPath $ExtractDirectory -Force
-$SourceExecutable = Get-ChildItem $ExtractDirectory -Filter "*.exe" -File -Recurse |
-  Sort-Object @{ Expression = { $_.Name -ne $ExecutableName } }, FullName |
-  Select-Object -First 1
-if ($null -eq $SourceExecutable) { throw "更新包中没有找到应用程序。" }
-$InstalledExecutableName = $SourceExecutable.Name
-Copy-Item (Join-Path $SourceExecutable.Directory.FullName "*") $TargetDirectory -Recurse -Force
-if ($ExecutableName -ne $InstalledExecutableName) {
-  Remove-Item (Join-Path $TargetDirectory $ExecutableName) -Force -ErrorAction SilentlyContinue
-}
-Remove-Item $Archive -Force -ErrorAction SilentlyContinue
-Remove-Item $ExtractDirectory -Recurse -Force -ErrorAction SilentlyContinue
-Start-Process (Join-Path $TargetDirectory $InstalledExecutableName)
-Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
-''');
+    final log = io.File(path.join(temporary.path, 'install-update.log'));
+    await script.writeAsString('\uFEFF${_windowsUpdateScript()}');
     await io.Process.start('powershell.exe', [
       '-NoProfile',
+      '-WindowStyle',
+      'Hidden',
       '-ExecutionPolicy',
       'Bypass',
       '-File',
@@ -335,9 +298,123 @@ Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
       targetDirectory,
       '-ExecutableName',
       executableName,
+      '-LogPath',
+      log.path,
     ], mode: io.ProcessStartMode.detached);
   }
 }
+
+String _windowsUpdateScript() => r'''
+param(
+  [int]$ProcessId,
+  [string]$Archive,
+  [string]$TargetDirectory,
+  [string]$ExecutableName,
+  [string]$LogPath,
+  [switch]$Elevated
+)
+$ErrorActionPreference = 'Stop'
+
+function Write-UpdateLog([string]$Message) {
+  try {
+    Add-Content -LiteralPath $LogPath -Value ((Get-Date).ToString('o') + ' ' + $Message)
+  } catch {
+  }
+}
+
+function Start-ElevatedUpdate {
+  function Quote-ProcessArgument([string]$Value) {
+    return '"' + $Value + '"'
+  }
+  $argumentList = @(
+    '-NoProfile',
+    '-WindowStyle', 'Hidden',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', (Quote-ProcessArgument $PSCommandPath),
+    '-ProcessId', [string]$ProcessId,
+    '-Archive', (Quote-ProcessArgument $Archive),
+    '-TargetDirectory', (Quote-ProcessArgument $TargetDirectory),
+    '-ExecutableName', (Quote-ProcessArgument $ExecutableName),
+    '-LogPath', (Quote-ProcessArgument $LogPath),
+    '-Elevated'
+  ) -join ' '
+  $child = Start-Process `
+    -FilePath 'powershell.exe' `
+    -WindowStyle Hidden `
+    -Verb RunAs `
+    -ArgumentList $argumentList `
+    -PassThru
+  if ($null -eq $child) { throw '无法启动管理员权限更新进程。' }
+  Write-UpdateLog '已请求管理员权限重试更新。'
+}
+
+function Invoke-Update {
+  $processDeadline = (Get-Date).AddSeconds(60)
+  while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -gt $processDeadline) { throw '等待旧程序退出超时。' }
+    Start-Sleep -Milliseconds 200
+  }
+
+  $extractDirectory = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ('thing-update-extract-' + [Guid]::NewGuid().ToString('N'))
+  try {
+    New-Item -Path $extractDirectory -ItemType Directory -Force | Out-Null
+    Expand-Archive -LiteralPath $Archive -DestinationPath $extractDirectory -Force
+    $sourceExecutable = Get-ChildItem -LiteralPath $extractDirectory `
+      -Filter $ExecutableName -File -Recurse | Select-Object -First 1
+    if ($null -eq $sourceExecutable) { throw '更新包中没有找到应用程序。' }
+
+    $targetExecutable = Join-Path $TargetDirectory $ExecutableName
+    $fileDeadline = (Get-Date).AddSeconds(30)
+    while (Test-Path -LiteralPath $targetExecutable) {
+      try {
+        $stream = [IO.File]::Open(
+          $targetExecutable,
+          [IO.FileMode]::Open,
+          [IO.FileAccess]::ReadWrite,
+          [IO.FileShare]::None
+        )
+        $stream.Dispose()
+        break
+      } catch {
+        if ((Get-Date) -gt $fileDeadline) { throw '旧程序文件仍被占用。' }
+        Start-Sleep -Milliseconds 200
+      }
+    }
+
+    Get-ChildItem -LiteralPath $sourceExecutable.Directory.FullName -Force |
+      Copy-Item -Destination $TargetDirectory -Recurse -Force
+    if (-not (Test-Path -LiteralPath $targetExecutable)) {
+      throw '更新文件复制后未找到应用程序。'
+    }
+    Start-Process -FilePath $targetExecutable -WorkingDirectory $TargetDirectory
+    Write-UpdateLog '更新完成。'
+  } finally {
+    Remove-Item -LiteralPath $extractDirectory -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+try {
+  if (-not $Elevated) {
+    try {
+      Invoke-Update
+    } catch {
+      $accessDenied = $_.Exception -is [UnauthorizedAccessException] `
+        -or $_.FullyQualifiedErrorId -like '*UnauthorizedAccess*'
+      if (-not $accessDenied) { throw }
+      Start-ElevatedUpdate
+      exit 0
+    }
+  } else {
+    Invoke-Update
+  }
+  Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+} catch {
+  Write-UpdateLog ('更新失败：' + $_.Exception.Message)
+  exit 1
+}
+''';
 
 String _safeFileName(String value) {
   final name = path.basename(value).replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
