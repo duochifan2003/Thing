@@ -173,12 +173,25 @@ class SyncService {
         );
       }
 
-      if (_sameContent(result.envelope, remote) &&
-          (_hasContent(local) || !_hasContent(remote))) {
-        final metadata = _success(baseline: remote, status: '已同步');
+      final resultMatchesLocal = _sameContent(result.envelope, local);
+      if (_sameContent(result.envelope, remote)) {
+        if (!resultMatchesLocal) {
+          await repository.replaceSyncSnapshot(
+            result.envelope.archive,
+            result.envelope.trash,
+            result.envelope.tombstones,
+          );
+        }
+        final downloaded = !_hasContent(local) && _hasContent(remote);
+        final metadata = _success(
+          baseline: remote,
+          status: downloaded ? '已下载' : '已同步',
+        );
         await repository.saveSyncMetadata(metadata);
         return SyncReport(
-          outcome: SyncOutcome.synchronized,
+          outcome: downloaded
+              ? SyncOutcome.downloaded
+              : SyncOutcome.synchronized,
           metadata: metadata,
           retentionDays: remote.retentionDays,
         );
