@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app_settings.dart';
+import 'app_update.dart';
 import 'archive.dart';
 import 'archive_repository.dart';
 import 'event_location.dart';
@@ -222,6 +223,7 @@ class PersonEventAtlasApp extends StatefulWidget {
 class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
   late final ArchiveRepository _repository =
       widget.repository ?? ArchiveRepository();
+  late final AppUpdateService _updateService = AppUpdateService();
   AppSettings _settings = AppSettings.defaults;
   bool _ready = false;
 
@@ -275,6 +277,8 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
               repository: _repository,
               settings: _settings,
               onSettingsChanged: _saveSettings,
+              onCheckForUpdates: _updateService.checkForUpdate,
+              onInstallUpdate: _updateService.downloadAndInstall,
             )
           : const Scaffold(body: Center(child: Text('正在打开本地档案…'))),
     );
@@ -473,11 +477,19 @@ class ArchiveHome extends StatefulWidget {
     this.repository,
     this.settings = AppSettings.defaults,
     this.onSettingsChanged,
+    this.onCheckForUpdates,
+    this.onInstallUpdate,
   });
 
   final ArchiveRepository? repository;
   final AppSettings settings;
   final Future<void> Function(AppSettings settings)? onSettingsChanged;
+  final Future<AppUpdateRelease?> Function()? onCheckForUpdates;
+  final Future<void> Function(
+    AppUpdateRelease release, {
+    UpdateProgress? onProgress,
+  })?
+  onInstallUpdate;
 
   @override
   State<ArchiveHome> createState() => _ArchiveHomeState();
@@ -1030,6 +1042,8 @@ class _ArchiveHomeState extends State<ArchiveHome> {
             onChooseSyncDirectory: _chooseSyncDirectory,
             onSyncNow: () => _syncNow(silent: false),
             onOpenTrash: _openTrash,
+            onCheckForUpdates: widget.onCheckForUpdates,
+            onInstallUpdate: widget.onInstallUpdate,
           ),
         };
         final workspace = Column(
@@ -2717,6 +2731,8 @@ class SettingsPage extends StatelessWidget {
     this.onChooseSyncDirectory,
     this.onSyncNow,
     this.onOpenTrash,
+    this.onCheckForUpdates,
+    this.onInstallUpdate,
   });
 
   final AppSettings settings;
@@ -2727,6 +2743,12 @@ class SettingsPage extends StatelessWidget {
   final Future<void> Function()? onChooseSyncDirectory;
   final Future<void> Function()? onSyncNow;
   final Future<void> Function()? onOpenTrash;
+  final Future<AppUpdateRelease?> Function()? onCheckForUpdates;
+  final Future<void> Function(
+    AppUpdateRelease release, {
+    UpdateProgress? onProgress,
+  })?
+  onInstallUpdate;
 
   void _change(AppSettings next) => unawaited(onChanged(next));
 
@@ -2990,6 +3012,10 @@ class SettingsPage extends StatelessWidget {
                   ],
                 ),
               ),
+              AppUpdatePanel(
+                onCheckForUpdates: onCheckForUpdates,
+                onInstallUpdate: onInstallUpdate,
+              ),
               LayoutBuilder(
                 builder: (context, constraints) => constraints.maxWidth >= 720
                     ? Row(
@@ -3032,6 +3058,148 @@ class SettingsPage extends StatelessWidget {
           Text(title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           child,
+        ],
+      ),
+    ),
+  );
+}
+
+class AppUpdatePanel extends StatefulWidget {
+  const AppUpdatePanel({
+    super.key,
+    this.onCheckForUpdates,
+    this.onInstallUpdate,
+  });
+
+  final Future<AppUpdateRelease?> Function()? onCheckForUpdates;
+  final Future<void> Function(
+    AppUpdateRelease release, {
+    UpdateProgress? onProgress,
+  })?
+  onInstallUpdate;
+
+  @override
+  State<AppUpdatePanel> createState() => _AppUpdatePanelState();
+}
+
+class _AppUpdatePanelState extends State<AppUpdatePanel> {
+  AppUpdateRelease? _release;
+  String? _message;
+  bool _checking = false;
+  bool _installing = false;
+  double? _progress;
+
+  Future<void> _checkForUpdates() async {
+    setState(() {
+      _checking = true;
+      _message = null;
+      _release = null;
+    });
+    try {
+      final check =
+          widget.onCheckForUpdates ?? AppUpdateService().checkForUpdate;
+      final release = await check();
+      if (!mounted) return;
+      setState(() {
+        _release = release;
+        _message = release == null
+            ? '当前已是最新版本。'
+            : '发现新版本 ${release.tagName}，可以下载并安装。';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _message = error.toString());
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _install() async {
+    final release = _release;
+    if (release == null) return;
+    setState(() {
+      _installing = true;
+      _progress = 0;
+      _message = '正在下载更新…';
+    });
+    try {
+      final install =
+          widget.onInstallUpdate ?? AppUpdateService().downloadAndInstall;
+      await install(
+        release,
+        onProgress: (value) {
+          if (!mounted) return;
+          setState(() {
+            _progress = value;
+            _message = '正在下载更新 ${value * 100 ~/ 1}%…';
+          });
+        },
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _installing = false;
+        _message = error.toString();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Card(
+    margin: const EdgeInsets.only(bottom: 16),
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('应用更新', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(
+            '当前版本 $appVersionLabel。更新包从 GitHub Release 获取。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _checking || _installing ? null : _checkForUpdates,
+                icon: const Icon(Icons.refresh),
+                label: Text(_checking ? '检查中…' : '检查更新'),
+              ),
+              if (_release != null)
+                FilledButton.icon(
+                  onPressed: _installing ? null : _install,
+                  icon: const Icon(Icons.download_outlined),
+                  label: Text(_installing ? '安装中…' : '下载并安装'),
+                ),
+            ],
+          ),
+          if (_installing && _progress != null) ...[
+            const SizedBox(height: 12),
+            LinearProgressIndicator(value: _progress),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _message!,
+              style: TextStyle(
+                color: _release == null && _message != '当前已是最新版本。'
+                    ? Theme.of(context).colorScheme.error
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          if (_release != null && _release!.notes.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _release!.notes.trim(),
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ],
       ),
     ),

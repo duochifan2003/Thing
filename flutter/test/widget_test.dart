@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:person_event_atlas/app_settings.dart';
+import 'package:person_event_atlas/app_update.dart';
 import 'package:person_event_atlas/archive.dart';
 import 'package:person_event_atlas/archive_repository.dart';
 import 'package:person_event_atlas/event_location.dart';
@@ -152,6 +153,44 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(changed?.defaultPrecision, Precision.month);
+  });
+
+  testWidgets('checks GitHub releases from settings', (tester) async {
+    final release = AppUpdateRelease(
+      version: '0.1.5',
+      tagName: 'v0.1.5',
+      htmlUrl: Uri.parse(
+        'https://github.com/duochifan2003/person-event-atlas/releases/tag/v0.1.5',
+      ),
+      notes: '修复更新功能。',
+      assets: [
+        AppUpdateAsset(
+          name: 'EventAtlas-macOS.dmg',
+          downloadUrl: Uri.parse(
+            'https://github.com/duochifan2003/person-event-atlas/releases/download/v0.1.5/EventAtlas-macOS.dmg',
+          ),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            settings: AppSettings.defaults,
+            onChanged: (_) async {},
+            onImport: () async {},
+            onExport: () async {},
+            onCheckForUpdates: () async => release,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '检查更新'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('发现新版本 v0.1.5，可以下载并安装。'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '下载并安装'), findsOneWidget);
   });
 
   testWidgets('applies precision preference only to new event editors', (
