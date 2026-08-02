@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:person_event_atlas/archive.dart';
 
+import 'test_data.dart';
+
 void main() {
   test('round-trips the current archive format', () {
     final decoded = Archive.decode(seedArchive.encode());
