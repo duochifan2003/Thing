@@ -95,8 +95,11 @@ jobs:
           name: Thing-windows-${{ github.sha }}
           path: release
 
+      - name: Rename Windows package for Release
+        run: mv "release/Thing-windows-${{ github.sha }}.zip" "release/Thing-windows-${{ inputs.release_tag }}.zip"
+
       - name: Upload Windows package to Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" "release/Thing-windows-${{ github.sha }}.zip" --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$RELEASE_TAG" "release/Thing-windows-${{ inputs.release_tag }}.zip" --repo "$GITHUB_REPOSITORY" --clobber
