@@ -192,6 +192,48 @@ void main() {
     },
   );
 
+  test('applies a remote deletion to an existing local archive', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'event-atlas-delete-sync-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final syncDirectory = path.join(root.path, 'shared');
+    final first = ArchiveRepository(
+      databasePath: path.join(root.path, 'first.sqlite'),
+    );
+    final second = ArchiveRepository(
+      databasePath: path.join(root.path, 'second.sqlite'),
+    );
+    addTearDown(first.close);
+    addTearDown(second.close);
+
+    await first.replace(Archive(people: [_person('p-1')], events: const []));
+    final firstService = SyncService(first);
+    final secondService = SyncService(second);
+    await firstService.synchronize(
+      directory: syncDirectory,
+      retention: TrashRetention.thirtyDays,
+    );
+    await secondService.synchronize(
+      directory: syncDirectory,
+      retention: TrashRetention.thirtyDays,
+    );
+
+    expect(await first.deletePerson('p-1'), isTrue);
+    await firstService.synchronize(
+      directory: syncDirectory,
+      retention: TrashRetention.thirtyDays,
+    );
+    await secondService.synchronize(
+      directory: syncDirectory,
+      retention: TrashRetention.thirtyDays,
+    );
+
+    expect((await second.load()).people, isEmpty);
+    expect((await second.loadTrash()).single.id, 'p-1');
+    expect((await second.loadTombstones()).single.id, 'p-1');
+  });
+
   test(
     'moves deleted records to trash, restores them, and keeps tombstones after purge',
     () async {
