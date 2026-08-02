@@ -4,7 +4,16 @@ import 'archive.dart';
 
 enum AppThemeMode { system, light, dark }
 
-enum AppPrimaryColor { forestGreen, terracotta, oceanBlue }
+enum AppPrimaryColor {
+  forestGreen,
+  terracotta,
+  oceanBlue,
+  berryRedOat,
+  mintGreenCharcoal,
+  royalBlueYellow,
+  brightOrangeDarkTeal,
+  creamWhiteLeafGreen,
+}
 
 enum TrashRetention {
   immediate,
@@ -28,12 +37,40 @@ extension AppPrimaryColorLabel on AppPrimaryColor {
     AppPrimaryColor.forestGreen => '森林绿',
     AppPrimaryColor.terracotta => '陶土橙',
     AppPrimaryColor.oceanBlue => '海蓝',
+    AppPrimaryColor.berryRedOat => '莓红 · 燕麦色',
+    AppPrimaryColor.mintGreenCharcoal => '薄荷绿 · 炭灰色',
+    AppPrimaryColor.royalBlueYellow => '宝蓝 · 明黄',
+    AppPrimaryColor.brightOrangeDarkTeal => '亮橙 · 深青色',
+    AppPrimaryColor.creamWhiteLeafGreen => '奶油白 · 草木绿',
   };
 
   int get value => switch (this) {
     AppPrimaryColor.forestGreen => 0xff185c45,
     AppPrimaryColor.terracotta => 0xffdd704c,
     AppPrimaryColor.oceanBlue => 0xff2f6690,
+    AppPrimaryColor.berryRedOat => 0xffb50031,
+    AppPrimaryColor.mintGreenCharcoal => 0xff7dffde,
+    AppPrimaryColor.royalBlueYellow => 0xff012bac,
+    AppPrimaryColor.brightOrangeDarkTeal => 0xffff7400,
+    AppPrimaryColor.creamWhiteLeafGreen => 0xfff6f9e4,
+  };
+
+  int get companionValue => switch (this) {
+    AppPrimaryColor.forestGreen ||
+    AppPrimaryColor.terracotta ||
+    AppPrimaryColor.oceanBlue => 0xffdd704c,
+    AppPrimaryColor.berryRedOat => 0xffdac9b1,
+    AppPrimaryColor.mintGreenCharcoal => 0xff2f2f2f,
+    AppPrimaryColor.royalBlueYellow => 0xffffcf00,
+    AppPrimaryColor.brightOrangeDarkTeal => 0xff253636,
+    AppPrimaryColor.creamWhiteLeafGreen => 0xff67b972,
+  };
+
+  int get darkValue => switch (this) {
+    AppPrimaryColor.forestGreen => 0xff55c596,
+    AppPrimaryColor.terracotta => 0xffff9a7b,
+    AppPrimaryColor.oceanBlue => 0xff79b8e6,
+    _ => value,
   };
 }
 
@@ -145,6 +182,11 @@ AppThemeMode _themeMode(Object? value) => switch (value) {
 AppPrimaryColor _primaryColor(Object? value) => switch (value) {
   'terracotta' => AppPrimaryColor.terracotta,
   'oceanBlue' => AppPrimaryColor.oceanBlue,
+  'berryRedOat' => AppPrimaryColor.berryRedOat,
+  'mintGreenCharcoal' => AppPrimaryColor.mintGreenCharcoal,
+  'royalBlueYellow' => AppPrimaryColor.royalBlueYellow,
+  'brightOrangeDarkTeal' => AppPrimaryColor.brightOrangeDarkTeal,
+  'creamWhiteLeafGreen' => AppPrimaryColor.creamWhiteLeafGreen,
   _ => AppPrimaryColor.forestGreen,
 };
 

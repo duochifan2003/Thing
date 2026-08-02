@@ -40,6 +40,12 @@ abstract final class AtlasPalette {
 bool _isDark(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark;
 
+Color _detailSurface(BuildContext context) =>
+    _isDark(context) ? const Color(0xff292d32) : const Color(0xfff1f4ef);
+
+Color _detailGroupSurface(BuildContext context) =>
+    _isDark(context) ? const Color(0xff30353b) : const Color(0xfff9fbf7);
+
 Color _personSurface(BuildContext context) =>
     _isDark(context) ? const Color(0xff3d4673) : AtlasPalette.personSurface;
 
@@ -86,17 +92,6 @@ DateTime? _parseLocalDate(String value) {
   final parsed = DateTime.tryParse(value);
   if (parsed == null || _formatLocalDate(parsed) != value) return null;
   return DateTime(parsed.year, parsed.month, parsed.day);
-}
-
-Widget _detailTransition(Widget child, Animation<double> animation) {
-  final slide = Tween<Offset>(
-    begin: const Offset(0.06, 0),
-    end: Offset.zero,
-  ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
-  return FadeTransition(
-    opacity: animation,
-    child: SlideTransition(position: slide, child: child),
-  );
 }
 
 class _EditorDialog extends StatelessWidget {
@@ -287,23 +282,45 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
 
 ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
   final dark = brightness == Brightness.dark;
-  final paper = dark ? const Color(0xff0f1012) : AtlasPalette.paper;
-  final sidebar = dark ? const Color(0xff17191c) : AtlasPalette.sidebar;
-  final card = dark ? const Color(0xff222529) : AtlasPalette.card;
+  final companion = Color(primaryColor.companionValue);
+  final paper = Color.lerp(
+    dark ? const Color(0xff0f1012) : AtlasPalette.paper,
+    companion,
+    dark ? 0.06 : 0.10,
+  )!;
+  final sidebar = Color.lerp(
+    dark ? const Color(0xff17191c) : AtlasPalette.sidebar,
+    companion,
+    dark ? 0.08 : 0.16,
+  )!;
+  final card = Color.lerp(
+    dark ? const Color(0xff222529) : AtlasPalette.card,
+    companion,
+    dark ? 0.04 : 0.06,
+  )!;
   final ink = dark ? const Color(0xfff2f2f3) : AtlasPalette.ink;
-  final muted = dark ? const Color(0xffa6a9ae) : AtlasPalette.muted;
-  final line = dark ? const Color(0xff3b3e43) : AtlasPalette.line;
-  final primary = dark
-      ? switch (primaryColor) {
-          AppPrimaryColor.forestGreen => const Color(0xff55c596),
-          AppPrimaryColor.terracotta => const Color(0xffff9a7b),
-          AppPrimaryColor.oceanBlue => const Color(0xff79b8e6),
-        }
-      : Color(primaryColor.value);
-  final onPrimary = dark ? const Color(0xff07140d) : Colors.white;
+  final muted = Color.lerp(
+    dark ? const Color(0xffa6a9ae) : AtlasPalette.muted,
+    companion,
+    0.08,
+  )!;
+  final line = Color.lerp(
+    dark ? const Color(0xff3b3e43) : AtlasPalette.line,
+    companion,
+    0.18,
+  )!;
+  final primary = Color(dark ? primaryColor.darkValue : primaryColor.value);
+  final onPrimary = primary.computeLuminance() > 0.5
+      ? Colors.black
+      : Colors.white;
+  final onSecondary = companion.computeLuminance() > 0.5
+      ? Colors.black
+      : Colors.white;
   final scheme = (dark ? ColorScheme.dark : ColorScheme.light)(
     primary: primary,
-    secondary: AtlasPalette.accent,
+    onPrimary: onPrimary,
+    secondary: companion,
+    onSecondary: onSecondary,
     surface: card,
     onSurface: ink,
     outline: line,
@@ -508,6 +525,12 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   String? _eventId;
   String? _error;
   bool _syncBusy = false;
+  final _detailViewportKey = GlobalKey();
+  Rect? _detailOrigin;
+  String? _detailPreviewEventId;
+  bool _detailOpening = false;
+  bool _detailClosing = false;
+  bool _detailEditing = false;
 
   @override
   void initState() {
@@ -641,16 +664,18 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     }
   }
 
-  Future<void> _write(Future<void> Function() action) async {
+  Future<bool> _write(Future<void> Function() action) async {
     try {
       await action();
       await _reload();
       await _syncNow(silent: true);
+      return true;
     } on FormatException catch (error) {
       _notice(error.message.toString());
     } catch (_) {
       _notice('保存失败：资料尚未写入本机。');
     }
+    return false;
   }
 
   void _notice(String message) => ScaffoldMessenger.of(
@@ -662,20 +687,90 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   EventItem? get _selectedEvent =>
       _archive?.events.where((event) => event.id == _eventId).firstOrNull;
 
-  void _selectPerson(String id) => setState(() {
-    _personId = id;
-    _eventId = null;
-    _view = ArchiveView.people;
-  });
-  void _selectEvent(String id) => setState(() {
-    _eventId = id;
-    _personId = null;
-    _view = ArchiveView.timeline;
-  });
-  void _clearSelection() => setState(() {
-    _personId = null;
-    _eventId = null;
-  });
+  void _selectPerson(String id) {
+    final detailAlreadyOpen = _personId != null || _eventId != null;
+    setState(() {
+      _personId = id;
+      _eventId = null;
+      _detailEditing = false;
+      _view = ArchiveView.people;
+      _detailOpening = false;
+      _detailClosing = false;
+      if (!detailAlreadyOpen) _detailOrigin = null;
+    });
+  }
+
+  void _selectEvent(String id) {
+    final detailAlreadyOpen = _personId != null || _eventId != null;
+    setState(() {
+      _eventId = id;
+      _personId = null;
+      _detailEditing = false;
+      _view = ArchiveView.timeline;
+      _detailOpening = false;
+      _detailClosing = false;
+      if (!detailAlreadyOpen) _detailOrigin = null;
+    });
+  }
+
+  void _openEventFromCard(String id, Rect globalOrigin) {
+    if (_detailOpening ||
+        _detailClosing ||
+        _personId != null ||
+        _eventId != null) {
+      return;
+    }
+    final renderObject = _detailViewportKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox) {
+      _selectEvent(id);
+      return;
+    }
+    final origin =
+        renderObject.globalToLocal(globalOrigin.topLeft) & globalOrigin.size;
+    setState(() {
+      _detailOrigin = origin;
+      _detailPreviewEventId = id;
+      _detailOpening = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_detailOpening) return;
+      setState(() {
+        _eventId = id;
+        _personId = null;
+        _view = ArchiveView.timeline;
+        _detailOpening = false;
+      });
+    });
+  }
+
+  void _clearSelection() {
+    if ((_personId != null || _eventId != null) && _detailOrigin != null) {
+      setState(() => _detailClosing = true);
+      return;
+    }
+    setState(() {
+      _personId = null;
+      _eventId = null;
+      _detailEditing = false;
+      _detailOpening = false;
+      _detailClosing = false;
+      _detailOrigin = null;
+      _detailPreviewEventId = null;
+    });
+  }
+
+  void _finishDetailClose() {
+    if (!_detailClosing || !mounted) return;
+    setState(() {
+      _personId = null;
+      _eventId = null;
+      _detailEditing = false;
+      _detailOpening = false;
+      _detailClosing = false;
+      _detailOrigin = null;
+      _detailPreviewEventId = null;
+    });
+  }
 
   Future<void> _editPerson([Person? initial]) =>
       _editPersonWithOptions(initial);
@@ -725,6 +820,12 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     if (event == null) return;
     await _write(() => _repository.saveEvent(event));
     if (mounted) _selectEvent(event.id);
+  }
+
+  Future<void> _saveDetailEvent(EventItem event) async {
+    if (await _write(() => _repository.saveEvent(event)) && mounted) {
+      setState(() => _detailEditing = false);
+    }
   }
 
   Future<void> _savePersonTags(List<String> tags) async {
@@ -991,11 +1092,20 @@ class _ArchiveHomeState extends State<ArchiveHome> {
         final tagsView = _view == ArchiveView.tags;
         final utilityView = tagsView || _view == ArchiveView.settings;
         final selected = _selectedPerson ?? _selectedEvent;
+        final detailOpen = selected != null && !utilityView;
+        final detailVisible = detailOpen || _detailOpening || _detailClosing;
+        final previewEventId = _eventId ?? _detailPreviewEventId;
+        final previewEvent = previewEventId == null
+            ? null
+            : archive.events
+                  .where((event) => event.id == previewEventId)
+                  .firstOrNull;
         final list = switch (_view) {
           ArchiveView.timeline => TimelineList(
             events: events,
             people: archive.people,
             onOpen: _selectEvent,
+            onOpenFromCard: _openEventFromCard,
           ),
           ArchiveView.people => PeopleList(
             people: people,
@@ -1046,122 +1156,113 @@ class _ArchiveHomeState extends State<ArchiveHome> {
             onInstallUpdate: widget.onInstallUpdate,
           ),
         };
-        final workspace = Column(
-          children: [
-            _Header(view: _view),
-            if (!utilityView)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                child: TextField(
-                  onChanged: (value) => setState(() => _query = value),
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search),
-                    hintText: '搜索人物、事件、地点或标签',
-                  ),
-                ),
-              ),
-            if (!utilityView)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        final browseControls = utilityView
+            ? const SizedBox.shrink()
+            : Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: FilterBar(
-                      archive: archive,
-                      filters: _filters,
-                      tagType: _view == ArchiveView.timeline
-                          ? EntityType.event
-                          : EntityType.person,
-                      onChanged: (value) => setState(() => _filters = value),
-                    ),
-                  ),
-                  if (desktop)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(0, 0, 16, 12),
-                      child: FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(0, 42),
-                          padding: const EdgeInsets.symmetric(horizontal: 14),
-                        ),
-                        onPressed: _view == ArchiveView.timeline
-                            ? _editEvent
-                            : _editPerson,
-                        icon: const Icon(Icons.add),
-                        label: Text(
-                          _view == ArchiveView.timeline ? '新增事件' : '新增人物',
-                        ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                    child: TextField(
+                      onChanged: (value) => setState(() => _query = value),
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: '搜索人物、事件、地点或标签',
                       ),
                     ),
-                ],
-              ),
-            if (_view == ArchiveView.timeline)
-              ReminderPanel(events: _dueEvents(archive), onOpen: _selectEvent),
-            Expanded(
-              child: desktop
-                  ? Row(
-                      children: [
-                        Expanded(child: list),
-                        AnimatedSize(
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
-                          alignment: Alignment.centerRight,
-                          child: selected != null && !utilityView
-                              ? AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 220),
-                                  transitionBuilder: _detailTransition,
-                                  child: SizedBox(
-                                    key: ValueKey(
-                                      'detail-${_eventId ?? _personId}',
-                                    ),
-                                    width: 390,
-                                    child: ArchiveDetail(
-                                      person: _selectedPerson,
-                                      event: _selectedEvent,
-                                      archive: archive,
-                                      onClose: _clearSelection,
-                                      onPerson: _selectPerson,
-                                      onEvent: _selectEvent,
-                                      onEditPerson: _editPerson,
-                                      onEditEvent: _editEvent,
-                                      onDeletePerson: _deletePerson,
-                                      onDeleteEvent: _deleteEvent,
-                                      onCancelEvent: _cancelEvent,
-                                      onTransitionEvent: _transitionEvent,
-                                      onPostponeEvent: _postponeEvent,
-                                    ),
-                                  ),
-                                )
-                              : const SizedBox.shrink(),
+                  ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: FilterBar(
+                          archive: archive,
+                          filters: _filters,
+                          tagType: _view == ArchiveView.timeline
+                              ? EntityType.event
+                              : EntityType.person,
+                          onChanged: (value) =>
+                              setState(() => _filters = value),
                         ),
-                      ],
-                    )
-                  : AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 220),
-                      transitionBuilder: _detailTransition,
-                      child: selected != null && !utilityView
-                          ? KeyedSubtree(
-                              key: ValueKey('detail-${_eventId ?? _personId}'),
-                              child: ArchiveDetail(
-                                person: _selectedPerson,
-                                event: _selectedEvent,
-                                archive: archive,
-                                onClose: _clearSelection,
-                                onPerson: _selectPerson,
-                                onEvent: _selectEvent,
-                                onEditPerson: _editPerson,
-                                onEditEvent: _editEvent,
-                                onDeletePerson: _deletePerson,
-                                onDeleteEvent: _deleteEvent,
-                                onCancelEvent: _cancelEvent,
-                                onTransitionEvent: _transitionEvent,
-                                onPostponeEvent: _postponeEvent,
+                      ),
+                      if (desktop)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(0, 0, 16, 12),
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 42),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
                               ),
-                            )
-                          : KeyedSubtree(
-                              key: ValueKey('list-${_view.name}'),
-                              child: list,
                             ),
+                            onPressed: _view == ArchiveView.timeline
+                                ? _editEvent
+                                : _editPerson,
+                            icon: const Icon(Icons.add),
+                            label: Text(
+                              _view == ArchiveView.timeline ? '新增事件' : '新增人物',
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  if (_view == ArchiveView.timeline)
+                    ReminderPanel(
+                      events: _dueEvents(archive),
+                      onOpen: _selectEvent,
                     ),
+                ],
+              );
+        final detail = ArchiveDetail(
+          fullPage: true,
+          person: _selectedPerson,
+          event: _selectedEvent,
+          editing: _detailEditing,
+          archive: archive,
+          onClose: _clearSelection,
+          onPerson: _selectPerson,
+          onEvent: _selectEvent,
+          onEditPerson: _editPerson,
+          onStartEventEdit: () => setState(() => _detailEditing = true),
+          onCancelEventEdit: () => setState(() => _detailEditing = false),
+          onSaveEvent: _saveDetailEvent,
+          onDeletePerson: _deletePerson,
+          onDeleteEvent: _deleteEvent,
+          onCancelEvent: _cancelEvent,
+          onTransitionEvent: _transitionEvent,
+          onPostponeEvent: _postponeEvent,
+        );
+        final workspace = Stack(
+          key: _detailViewportKey,
+          fit: StackFit.expand,
+          children: [
+            Column(
+              children: [
+                _Header(view: _view),
+                Expanded(
+                  child: Column(
+                    children: [
+                      browseControls,
+                      Expanded(child: list),
+                    ],
+                  ),
+                ),
+              ],
             ),
+            if (previewEvent != null)
+              _DetailExpansion(
+                visible: detailVisible,
+                expanded: detailOpen && !_detailOpening && !_detailClosing,
+                origin: _detailOrigin,
+                preview: EventCard(
+                  event: previewEvent,
+                  people: {
+                    for (final person in archive.people) person.id: person.name,
+                  },
+                ),
+                onClosed: _finishDetailClose,
+                child: detail,
+              ),
           ],
         );
         return Scaffold(
@@ -1175,6 +1276,11 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                           _view = view;
                           _personId = null;
                           _eventId = null;
+                          _detailEditing = false;
+                          _detailOrigin = null;
+                          _detailPreviewEventId = null;
+                          _detailOpening = false;
+                          _detailClosing = false;
                           _filters = _filters.copyWith(clearTag: true);
                         }),
                       ),
@@ -1191,6 +1297,11 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                     _view = ArchiveView.values[index];
                     _personId = null;
                     _eventId = null;
+                    _detailEditing = false;
+                    _detailOrigin = null;
+                    _detailPreviewEventId = null;
+                    _detailOpening = false;
+                    _detailClosing = false;
                     _filters = _filters.copyWith(clearTag: true);
                   }),
                   destinations: const [
@@ -1820,10 +1931,12 @@ class TimelineList extends StatelessWidget {
     required this.events,
     required this.people,
     required this.onOpen,
+    this.onOpenFromCard,
   });
   final List<EventItem> events;
   final List<Person> people;
   final ValueChanged<String> onOpen;
+  final void Function(String id, Rect origin)? onOpenFromCard;
   @override
   Widget build(BuildContext context) {
     if (events.isEmpty) {
@@ -1836,7 +1949,7 @@ class TimelineList extends StatelessWidget {
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final event = events[index];
-        final links = _orderedPeople(event.people);
+        final cardKey = GlobalKey();
         return IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1876,8 +1989,8 @@ class TimelineList extends StatelessWidget {
                       child: Container(
                         width: 10,
                         height: 10,
-                        decoration: const BoxDecoration(
-                          color: AtlasPalette.accent,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.secondary,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -1886,132 +1999,22 @@ class TimelineList extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: Card(
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(16),
-                    mouseCursor: SystemMouseCursors.click,
-                    hoverColor: Theme.of(
-                      context,
-                    ).colorScheme.primary.withAlpha(0x1f),
-                    splashColor: Theme.of(
-                      context,
-                    ).colorScheme.primary.withAlpha(0x33),
-                    onTap: () => onOpen(event.id),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  event.title,
-                                  style: const TextStyle(
-                                    fontSize: 21,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.1,
-                                  ),
-                                ),
-                                if (event.place.isNotEmpty)
-                                  Text(
-                                    event.place,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                if (event.description.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 7),
-                                    child: Text(
-                                      event.description,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 14,
-                                        height: 1.45,
-                                      ),
-                                    ),
-                                  ),
-                                const SizedBox(height: 10),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    Chip(
-                                      backgroundColor: _eventStatusColor(
-                                        event.status,
-                                      ),
-                                      label: Text(
-                                        event.status.label,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: _eventStatusTextColor(
-                                            event.status,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    ...event.tags.map(
-                                      (tag) => Chip(
-                                        backgroundColor: _eventTagSurface(
-                                          context,
-                                        ),
-                                        label: Text(
-                                          '#$tag',
-                                          style: TextStyle(
-                                            color: _eventTagOnSurface(context),
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    ...links.map(
-                                      (link) => Chip(
-                                        backgroundColor: _personSurface(
-                                          context,
-                                        ),
-                                        label: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.person_outline,
-                                              size: 15,
-                                              color: _personOnSurface(context),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Flexible(
-                                              child: Text(
-                                                '${names[link.personId] ?? '未知人物'} · ${link.role.label}',
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  color: _personOnSurface(
-                                                    context,
-                                                  ),
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Icon(Icons.arrow_outward),
-                        ],
-                      ),
-                    ),
-                  ),
+                child: EventCard(
+                  key: cardKey,
+                  event: event,
+                  people: names,
+                  onTap: () {
+                    final renderObject = cardKey.currentContext
+                        ?.findRenderObject();
+                    if (onOpenFromCard != null && renderObject is RenderBox) {
+                      final origin =
+                          renderObject.localToGlobal(Offset.zero) &
+                          renderObject.size;
+                      onOpenFromCard!(event.id, origin);
+                    } else {
+                      onOpen(event.id);
+                    }
+                  },
                 ),
               ),
             ],
@@ -2020,6 +2023,129 @@ class TimelineList extends StatelessWidget {
       },
     );
   }
+}
+
+class EventCard extends StatelessWidget {
+  const EventCard({
+    super.key,
+    required this.event,
+    required this.people,
+    this.onTap,
+  });
+
+  final EventItem event;
+  final Map<String, String> people;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: InkWell(
+      borderRadius: BorderRadius.circular(16),
+      mouseCursor: onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
+      hoverColor: Theme.of(context).colorScheme.primary.withAlpha(0x1f),
+      splashColor: Theme.of(context).colorScheme.primary.withAlpha(0x33),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    event.title,
+                    style: const TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                  if (event.place.isNotEmpty)
+                    Text(
+                      event.place,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  if (event.description.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 7),
+                      child: Text(
+                        event.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 14, height: 1.45),
+                      ),
+                    ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      Chip(
+                        backgroundColor: _eventStatusColor(event.status),
+                        label: Text(
+                          event.status.label,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _eventStatusTextColor(event.status),
+                          ),
+                        ),
+                      ),
+                      ...event.tags.map(
+                        (tag) => Chip(
+                          backgroundColor: _eventTagSurface(context),
+                          label: Text(
+                            '#$tag',
+                            style: TextStyle(
+                              color: _eventTagOnSurface(context),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ),
+                      ..._orderedPeople(event.people).map(
+                        (link) => Chip(
+                          backgroundColor: _personSurface(context),
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.person_outline,
+                                size: 15,
+                                color: _personOnSurface(context),
+                              ),
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: Text(
+                                  '${people[link.personId] ?? '未知人物'} · ${link.role.label}',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: _personOnSurface(context),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_outward),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 List<PersonLink> _orderedPeople(Iterable<PersonLink> people) =>
@@ -2160,40 +2286,136 @@ class PeopleList extends StatelessWidget {
   }
 }
 
+class _DetailExpansion extends StatefulWidget {
+  const _DetailExpansion({
+    required this.visible,
+    required this.expanded,
+    required this.origin,
+    required this.preview,
+    required this.onClosed,
+    required this.child,
+  });
+
+  final bool visible;
+  final bool expanded;
+  final Rect? origin;
+  final Widget preview;
+  final VoidCallback onClosed;
+  final Widget child;
+
+  @override
+  State<_DetailExpansion> createState() => _DetailExpansionState();
+}
+
+class _DetailExpansionState extends State<_DetailExpansion>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+    value: widget.expanded ? 1 : 0,
+  );
+
+  @override
+  void didUpdateWidget(covariant _DetailExpansion oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.expanded == oldWidget.expanded) return;
+    if (widget.expanded) {
+      _controller.forward();
+    } else {
+      _close();
+    }
+  }
+
+  Future<void> _close() async {
+    await _controller.reverse();
+    if (mounted && widget.visible && _controller.isDismissed) {
+      widget.onClosed();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    key: const ValueKey('detail-expansion-animation'),
+    animation: _controller,
+    builder: (context, _) => LayoutBuilder(
+      builder: (context, constraints) {
+        final target = Rect.fromLTWH(
+          0,
+          0,
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
+        final start = widget.origin ?? target;
+        final progress = Curves.easeInOutCubic.transform(_controller.value);
+        final rect = Rect.lerp(start, target, progress)!;
+        final radius = 16 * (1 - progress);
+        final child = progress < 0.62 ? widget.preview : widget.child;
+        return Stack(
+          children: [
+            Positioned.fromRect(
+              rect: rect,
+              child: ClipRRect(
+                borderRadius: BorderRadius.all(Radius.circular(radius)),
+                child: IgnorePointer(ignoring: progress < 0.98, child: child),
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 class ArchiveDetail extends StatelessWidget {
   const ArchiveDetail({
     super.key,
+    this.fullPage = false,
     this.person,
     this.event,
+    this.editing = false,
     required this.archive,
     required this.onClose,
     required this.onPerson,
     required this.onEvent,
     required this.onEditPerson,
-    required this.onEditEvent,
+    required this.onStartEventEdit,
+    required this.onCancelEventEdit,
+    required this.onSaveEvent,
     required this.onDeletePerson,
     required this.onDeleteEvent,
     required this.onCancelEvent,
     required this.onTransitionEvent,
     required this.onPostponeEvent,
   });
+  final bool fullPage;
   final Person? person;
   final EventItem? event;
+  final bool editing;
   final Archive archive;
   final VoidCallback onClose;
   final ValueChanged<String> onPerson;
   final ValueChanged<String> onEvent;
   final ValueChanged<Person> onEditPerson;
-  final ValueChanged<EventItem> onEditEvent;
+  final VoidCallback onStartEventEdit;
+  final VoidCallback onCancelEventEdit;
+  final Future<void> Function(EventItem) onSaveEvent;
   final ValueChanged<Person> onDeletePerson;
   final ValueChanged<EventItem> onDeleteEvent;
   final ValueChanged<EventItem> onCancelEvent;
   final void Function(EventItem, EventStatus) onTransitionEvent;
   final ValueChanged<EventItem> onPostponeEvent;
+
   @override
   Widget build(BuildContext context) {
     final item = person ?? event;
     if (item == null) return const SizedBox.shrink();
+    final colors = Theme.of(context).colorScheme;
     final names = {for (final item in archive.people) item.id: item};
     final related = person == null
         ? const <EventItem>[]
@@ -2203,9 +2425,45 @@ class ArchiveDetail extends StatelessWidget {
                     item.people.any((link) => link.personId == person!.id),
               )
               .toList();
+    final isEditing = editing && event != null;
+
+    Widget group(String title, IconData icon, Widget child) => Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Material(
+        color: _detailGroupSurface(context),
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: colors.outline.withAlpha(0x80)),
+          borderRadius: const BorderRadius.all(Radius.circular(14)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 18, color: colors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              child,
+            ],
+          ),
+        ),
+      ),
+    );
+
     void handleAction(String action) {
       if (action == 'edit') {
-        person != null ? onEditPerson(person!) : onEditEvent(event!);
+        person != null ? onEditPerson(person!) : onStartEventEdit();
       }
       if (person != null && action == 'delete') {
         onDeletePerson(person!);
@@ -2225,266 +2483,320 @@ class ArchiveDetail extends StatelessWidget {
       }
     }
 
-    return ClipRRect(
-      borderRadius: const BorderRadius.only(
-        topLeft: Radius.circular(18),
-        bottomLeft: Radius.circular(18),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          border: Border(
-            left: BorderSide(color: Theme.of(context).colorScheme.outline),
+    final menu = MenuAnchor(
+      animated: true,
+      crossAxisUnconstrained: false,
+      reservedPadding: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      style: MenuStyle(
+        alignment: AlignmentDirectional.bottomEnd,
+        backgroundColor: WidgetStatePropertyAll(colors.surface),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        elevation: const WidgetStatePropertyAll(6),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+        shape: const WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
           ),
         ),
+      ),
+      menuChildren: [
+        _detailMenuItem(context, '编辑', () => handleAction('edit')),
+        if (event != null && event!.status == EventStatus.scheduled)
+          _detailMenuItem(
+            context,
+            event!.start.isEmpty ? '设置日期' : '延期',
+            () => handleAction('postpone'),
+          ),
+        if (event != null && event!.status == EventStatus.scheduled)
+          _detailMenuItem(context, '开始', () => handleAction('start')),
+        if (event != null && event!.status == EventStatus.active)
+          _detailMenuItem(context, '结束', () => handleAction('complete')),
+        if (event != null &&
+            (event!.status == EventStatus.scheduled ||
+                event!.status == EventStatus.active))
+          _detailMenuItem(context, '取消事件', () => handleAction('cancel')),
+        if (person != null)
+          _detailMenuItem(context, '删除', () => handleAction('delete')),
+        if (event != null)
+          _detailMenuItem(
+            context,
+            '永久删除',
+            () => handleAction('permanent-delete'),
+          ),
+      ],
+      builder: (context, controller, child) => IconButton(
+        tooltip: '更多操作',
+        onPressed: () {
+          if (controller.isOpen) {
+            controller.close();
+          } else {
+            controller.open();
+          }
+        },
+        icon: const Icon(Icons.more_horiz),
+      ),
+    );
+
+    return ClipRRect(
+      borderRadius: fullPage
+          ? BorderRadius.zero
+          : const BorderRadius.only(
+              topLeft: Radius.circular(18),
+              bottomLeft: Radius.circular(18),
+            ),
+      child: Material(
+        color: fullPage ? _detailSurface(context) : colors.surface,
+        shape: fullPage
+            ? null
+            : RoundedRectangleBorder(
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(18),
+                  bottomLeft: Radius.circular(18),
+                ),
+                side: BorderSide(color: colors.outline),
+              ),
+        clipBehavior: Clip.antiAlias,
         child: ListView(
-          padding: const EdgeInsets.all(20),
+          padding: fullPage
+              ? const EdgeInsets.fromLTRB(32, 12, 32, 40)
+              : const EdgeInsets.all(20),
           children: [
-            Row(
-              children: [
-                IconButton(onPressed: onClose, icon: const Icon(Icons.close)),
-                const Spacer(),
-                MenuAnchor(
-                  animated: true,
-                  crossAxisUnconstrained: false,
-                  reservedPadding: EdgeInsets.zero,
-                  clipBehavior: Clip.antiAlias,
-                  style: MenuStyle(
-                    alignment: AlignmentDirectional.bottomEnd,
-                    backgroundColor: WidgetStatePropertyAll(
-                      Theme.of(context).colorScheme.surface,
-                    ),
-                    surfaceTintColor: const WidgetStatePropertyAll(
-                      Colors.transparent,
-                    ),
-                    elevation: const WidgetStatePropertyAll(6),
-                    padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-                    shape: const WidgetStatePropertyAll(
-                      RoundedRectangleBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                      ),
-                    ),
+            Container(
+              padding: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: colors.outlineVariant, width: 1.5),
+                ),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: fullPage ? '返回' : '关闭',
+                    onPressed: onClose,
+                    icon: Icon(fullPage ? Icons.arrow_back : Icons.close),
                   ),
-                  menuChildren: [
-                    _detailMenuItem(context, '编辑', () => handleAction('edit')),
-                    if (event != null && event!.status == EventStatus.scheduled)
-                      _detailMenuItem(
-                        context,
-                        event!.start.isEmpty ? '设置日期' : '延期',
-                        () => handleAction('postpone'),
-                      ),
-                    if (event != null && event!.status == EventStatus.scheduled)
-                      _detailMenuItem(
-                        context,
-                        '开始',
-                        () => handleAction('start'),
-                      ),
-                    if (event != null && event!.status == EventStatus.active)
-                      _detailMenuItem(
-                        context,
-                        '结束',
-                        () => handleAction('complete'),
-                      ),
-                    if (event != null &&
-                        (event!.status == EventStatus.scheduled ||
-                            event!.status == EventStatus.active))
-                      _detailMenuItem(
-                        context,
-                        '取消事件',
-                        () => handleAction('cancel'),
-                      ),
-                    if (person != null)
-                      _detailMenuItem(
-                        context,
-                        '删除',
-                        () => handleAction('delete'),
-                      ),
-                    if (event != null)
-                      _detailMenuItem(
-                        context,
-                        '永久删除',
-                        () => handleAction('permanent-delete'),
-                      ),
+                  if (fullPage) ...[
+                    const SizedBox(width: 8),
+                    Icon(
+                      person != null
+                          ? Icons.person_outline
+                          : isEditing
+                          ? Icons.edit_note_outlined
+                          : Icons.event_note_outlined,
+                      size: 20,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      person != null
+                          ? '人物档案'
+                          : isEditing
+                          ? '编辑事件'
+                          : '事件详情',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                   ],
-                  builder: (context, controller, child) => IconButton(
-                    tooltip: '更多操作',
-                    onPressed: () {
-                      if (controller.isOpen) {
-                        controller.close();
-                      } else {
-                        controller.open();
-                      }
-                    },
-                    icon: const Icon(Icons.more_horiz),
-                  ),
-                ),
-              ],
-            ),
-            if (person != null)
-              CircleAvatar(
-                radius: 28,
-                backgroundColor: _personSurface(context),
-                child: Text(
-                  person!.name.characters.first,
-                  style: TextStyle(
-                    color: _personOnSurface(context),
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 14),
-            Text(
-              person != null ? '人物档案' : event!.dateLabel,
-              style: TextStyle(
-                color: person != null
-                    ? _personOnSurface(context)
-                    : Theme.of(context).colorScheme.primary,
+                  const Spacer(),
+                  if (isEditing)
+                    TextButton(
+                      onPressed: onCancelEventEdit,
+                      child: const Text('取消编辑'),
+                    )
+                  else
+                    menu,
+                ],
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              person?.name ?? event!.title,
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            if ((person?.bio ?? event?.description ?? '').isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(person?.bio ?? event!.description),
-              ),
-            const SizedBox(height: 24),
-            if (event != null) ...[
-              Chip(
-                backgroundColor: _eventStatusColor(event!.status),
-                label: Text(
-                  event!.status.label,
-                  style: TextStyle(color: _eventStatusTextColor(event!.status)),
-                ),
-              ),
-              const SizedBox(height: 12),
-              DetailSection(
-                title: '事件信息',
-                values: {'时间': event!.dateLabel, '地点': event!.place},
-              ),
-              if (event!.tags.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Text('事件标签', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: event!.tags
-                      .map(
-                        (tag) => Chip(
-                          backgroundColor: _eventTagSurface(context),
-                          label: Text(
-                            '#$tag',
-                            style: TextStyle(
-                              color: _eventTagOnSurface(context),
-                            ),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                ),
-              ],
-              const SizedBox(height: 20),
-              Text('关联人物', style: Theme.of(context).textTheme.titleMedium),
-              ..._orderedPeople(event!.people).map(
-                (link) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  mouseCursor: SystemMouseCursors.click,
-                  hoverColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withAlpha(0x1f),
-                  splashColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withAlpha(0x33),
-                  onTap: () => onPerson(link.personId),
-                  leading: CircleAvatar(
-                    radius: 14,
-                    backgroundColor: _personSurface(context),
-                    child: Icon(
-                      Icons.person_outline,
-                      size: 16,
+            const SizedBox(height: 20),
+            if (isEditing)
+              EventEditor(
+                key: ValueKey('detail-editor-${event!.id}'),
+                inline: true,
+                initial: event,
+                people: archive.people,
+                events: archive.events,
+                eventTags: archive.effectiveEventTags,
+                onCancel: onCancelEventEdit,
+                onSaved: onSaveEvent,
+              )
+            else ...[
+              if (person != null)
+                CircleAvatar(
+                  radius: 28,
+                  backgroundColor: _personSurface(context),
+                  child: Text(
+                    person!.name.characters.first,
+                    style: TextStyle(
                       color: _personOnSurface(context),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  title: Text(names[link.personId]?.name ?? '未知人物'),
-                  trailing: Text(link.role.label),
+                ),
+              const SizedBox(height: 14),
+              Text(
+                person != null ? '人物档案' : event!.dateLabel,
+                style: TextStyle(
+                  color: person != null
+                      ? _personOnSurface(context)
+                      : colors.primary,
                 ),
               ),
-              if (event!.previousEventIds.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Text('前序事件', style: Theme.of(context).textTheme.titleMedium),
-                ...event!.previousEventIds.map((id) {
-                  final previous = archive.events
-                      .where((item) => item.id == id)
-                      .firstOrNull;
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    mouseCursor: previous == null
-                        ? SystemMouseCursors.basic
-                        : SystemMouseCursors.click,
-                    hoverColor: Theme.of(
-                      context,
-                    ).colorScheme.primary.withAlpha(0x1f),
-                    splashColor: Theme.of(
-                      context,
-                    ).colorScheme.primary.withAlpha(0x33),
-                    onTap: previous == null ? null : () => onEvent(id),
-                    title: Text(previous?.title ?? '未知事件'),
-                    subtitle: Text(previous?.dateLabel ?? '关联资料缺失'),
-                    trailing: const Icon(Icons.chevron_right),
-                  );
-                }),
-              ],
-            ],
-            if (person != null) ...[
-              DetailSection(
-                title: '资料',
-                values: {'备注': person!.notes, '来源': person!.sources.join('；')},
+              const SizedBox(height: 4),
+              Text(
+                person?.name ?? event!.title,
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
-              if (person!.tags.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Text('人物标签', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: person!.tags
-                      .map(
-                        (tag) => Chip(
-                          backgroundColor: _personTagSurface(context),
-                          label: Text(
-                            '#$tag',
-                            style: TextStyle(
-                              color: _personTagOnSurface(context),
+              if ((person?.bio ?? event?.description ?? '').isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(person?.bio ?? event!.description),
+                ),
+              const SizedBox(height: 24),
+              if (event != null) ...[
+                Chip(
+                  backgroundColor: _eventStatusColor(event!.status),
+                  label: Text(
+                    event!.status.label,
+                    style: TextStyle(
+                      color: _eventStatusTextColor(event!.status),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DetailSection(
+                  title: '事件信息',
+                  values: {'时间': event!.dateLabel, '地点': event!.place},
+                ),
+                if (event!.tags.isNotEmpty)
+                  group(
+                    '事件标签',
+                    Icons.sell_outlined,
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: event!.tags
+                          .map(
+                            (tag) => Chip(
+                              backgroundColor: _eventTagSurface(context),
+                              label: Text(
+                                '#$tag',
+                                style: TextStyle(
+                                  color: _eventTagOnSurface(context),
+                                ),
+                              ),
                             ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                group(
+                  '关联人物',
+                  Icons.people_outline,
+                  Column(
+                    children: _orderedPeople(event!.people)
+                        .map(
+                          (link) => ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            mouseCursor: SystemMouseCursors.click,
+                            hoverColor: colors.primary.withAlpha(0x1f),
+                            splashColor: colors.primary.withAlpha(0x33),
+                            onTap: () => onPerson(link.personId),
+                            leading: CircleAvatar(
+                              radius: 14,
+                              backgroundColor: _personSurface(context),
+                              child: Icon(
+                                Icons.person_outline,
+                                size: 16,
+                                color: _personOnSurface(context),
+                              ),
+                            ),
+                            title: Text(names[link.personId]?.name ?? '未知人物'),
+                            trailing: Text(link.role.label),
                           ),
+                        )
+                        .toList(),
+                  ),
+                ),
+                if (event!.previousEventIds.isNotEmpty)
+                  group(
+                    '前序事件',
+                    Icons.account_tree_outlined,
+                    Column(
+                      children: event!.previousEventIds.map((id) {
+                        final previous = archive.events
+                            .where((item) => item.id == id)
+                            .firstOrNull;
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          mouseCursor: previous == null
+                              ? SystemMouseCursors.basic
+                              : SystemMouseCursors.click,
+                          hoverColor: colors.primary.withAlpha(0x1f),
+                          splashColor: colors.primary.withAlpha(0x33),
+                          onTap: previous == null ? null : () => onEvent(id),
+                          title: Text(previous?.title ?? '未知事件'),
+                          subtitle: Text(previous?.dateLabel ?? '关联资料缺失'),
+                          trailing: const Icon(Icons.chevron_right),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+              ],
+              if (person != null) ...[
+                DetailSection(
+                  title: '资料',
+                  values: {
+                    '备注': person!.notes,
+                    '来源': person!.sources.join('；'),
+                  },
+                ),
+                if (person!.tags.isNotEmpty)
+                  group(
+                    '人物标签',
+                    Icons.sell_outlined,
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: person!.tags
+                          .map(
+                            (tag) => Chip(
+                              backgroundColor: _personTagSurface(context),
+                              label: Text(
+                                '#$tag',
+                                style: TextStyle(
+                                  color: _personTagOnSurface(context),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                group(
+                  '相关事件',
+                  Icons.event_note_outlined,
+                  related.isEmpty
+                      ? const Text('暂无关联事件')
+                      : Column(
+                          children: related
+                              .map(
+                                (item) => ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  mouseCursor: SystemMouseCursors.click,
+                                  hoverColor: colors.primary.withAlpha(0x1f),
+                                  splashColor: colors.primary.withAlpha(0x33),
+                                  onTap: () => onEvent(item.id),
+                                  title: Text(item.title),
+                                  subtitle: Text(item.dateLabel),
+                                  trailing: const Icon(Icons.chevron_right),
+                                ),
+                              )
+                              .toList(),
                         ),
-                      )
-                      .toList(),
                 ),
               ],
-              const SizedBox(height: 20),
-              Text('相关事件', style: Theme.of(context).textTheme.titleMedium),
-              ...related.map(
-                (item) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  mouseCursor: SystemMouseCursors.click,
-                  hoverColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withAlpha(0x1f),
-                  splashColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withAlpha(0x33),
-                  onTap: () => onEvent(item.id),
-                  title: Text(item.title),
-                  subtitle: Text(item.dateLabel),
-                  trailing: const Icon(Icons.chevron_right),
-                ),
-              ),
             ],
           ],
         ),
@@ -2498,14 +2810,27 @@ class DetailSection extends StatelessWidget {
   final String title;
   final Map<String, String> values;
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(title, style: Theme.of(context).textTheme.titleMedium),
-      const SizedBox(height: 8),
-      ...values.entries
-          .where((entry) => entry.value.isNotEmpty)
-          .map(
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final entries = values.entries.where((entry) => entry.value.isNotEmpty);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      decoration: BoxDecoration(
+        color: _detailGroupSurface(context),
+        border: Border.all(color: colors.outline.withAlpha(0x80)),
+        borderRadius: const BorderRadius.all(Radius.circular(14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 12),
+          ...entries.map(
             (entry) => Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
@@ -2515,9 +2840,7 @@ class DetailSection extends StatelessWidget {
                     width: 52,
                     child: Text(
                       entry.key,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                      style: TextStyle(color: colors.onSurfaceVariant),
                     ),
                   ),
                   Expanded(child: Text(entry.value)),
@@ -2525,8 +2848,12 @@ class DetailSection extends StatelessWidget {
               ),
             ),
           ),
-    ],
-  );
+          if (entries.isEmpty)
+            Text('暂无内容', style: TextStyle(color: colors.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
 }
 
 Widget _detailMenuItem(
@@ -2914,7 +3241,7 @@ class SettingsPage extends StatelessWidget {
     );
     final colorSection = _settingsSection(
       context,
-      title: '主色预设',
+      title: '配色搭配',
       child: Wrap(
         spacing: 10,
         runSpacing: 10,
@@ -2923,9 +3250,20 @@ class SettingsPage extends StatelessWidget {
               (color) => ChoiceChip(
                 key: ValueKey('primary-${color.name}'),
                 label: Text(color.label),
-                avatar: CircleAvatar(
-                  backgroundColor: Color(color.value),
-                  radius: 8,
+                avatar: SizedBox(
+                  width: 28,
+                  height: 16,
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.all(Radius.circular(4)),
+                    child: Row(
+                      children: [
+                        Expanded(child: ColoredBox(color: Color(color.value))),
+                        Expanded(
+                          child: ColoredBox(color: Color(color.companionValue)),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
                 selectedColor: Theme.of(
                   context,
@@ -3850,12 +4188,18 @@ class EventEditor extends StatefulWidget {
     this.events = const [],
     this.eventTags = const [],
     this.defaultPrecision = Precision.day,
+    this.inline = false,
+    this.onCancel,
+    this.onSaved,
   });
   final EventItem? initial;
   final List<Person> people;
   final List<EventItem> events;
   final List<String> eventTags;
   final Precision defaultPrecision;
+  final bool inline;
+  final VoidCallback? onCancel;
+  final FutureOr<void> Function(EventItem event)? onSaved;
   @override
   State<EventEditor> createState() => _EventEditorState();
 }
@@ -3939,10 +4283,8 @@ class _EventEditorState extends State<EventEditor> {
   }
 
   @override
-  Widget build(BuildContext context) => _EditorDialog(
-    title: Text(widget.initial == null ? '新增事件' : '编辑事件'),
-    contentWidth: 900,
-    content: SizedBox(
+  Widget build(BuildContext context) {
+    final content = SizedBox(
       width: double.infinity,
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -3954,7 +4296,7 @@ class _EventEditorState extends State<EventEditor> {
               Expanded(
                 child: TextField(
                   controller: _title,
-                  autofocus: true,
+                  autofocus: !widget.inline,
                   decoration: const InputDecoration(labelText: '事件标题 *'),
                 ),
               ),
@@ -4172,15 +4514,37 @@ class _EventEditorState extends State<EventEditor> {
           ),
         ],
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
-      ),
-      FilledButton(onPressed: _save, child: const Text('保存')),
-    ],
-  );
+    );
+    if (widget.inline) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          content,
+          const SizedBox(height: 16),
+          OverflowBar(
+            alignment: MainAxisAlignment.end,
+            spacing: 8,
+            children: [
+              TextButton(onPressed: widget.onCancel, child: const Text('取消')),
+              FilledButton(onPressed: _save, child: const Text('保存修改')),
+            ],
+          ),
+        ],
+      );
+    }
+    return _EditorDialog(
+      title: Text(widget.initial == null ? '新增事件' : '编辑事件'),
+      contentWidth: 900,
+      content: content,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
 
   Widget _sectionTitle(String title) {
     final colors = Theme.of(context).colorScheme;
@@ -4538,7 +4902,7 @@ class _EventEditorState extends State<EventEditor> {
     setState(() => controller.text = formatted);
   }
 
-  void _save() {
+  Future<void> _save() async {
     final title = _title.text.trim();
     final start = _start.text.trim();
     final end = _precision == Precision.range ? _end.text.trim() : null;
@@ -4587,27 +4951,28 @@ class _EventEditorState extends State<EventEditor> {
       return;
     }
     final now = DateTime.now();
-    Navigator.pop(
-      context,
-      EventItem(
-        id: _id,
-        title: title,
-        precision: _status == EventStatus.scheduled
-            ? Precision.day
-            : _precision,
-        start: start,
-        end: _status == EventStatus.scheduled ? null : end,
-        place: location.value,
-        description: _description.text.trim(),
-        tags: _split(_tags.text),
-        sources: widget.initial?.sources ?? const [],
-        people: _links,
-        createdAt: _createdAt,
-        updatedAt: now,
-        status: _status,
-        previousEventIds: _previousEventIds.toList()..sort(),
-      ),
+    final saved = EventItem(
+      id: _id,
+      title: title,
+      precision: _status == EventStatus.scheduled ? Precision.day : _precision,
+      start: start,
+      end: _status == EventStatus.scheduled ? null : end,
+      place: location.value,
+      description: _description.text.trim(),
+      tags: _split(_tags.text),
+      sources: widget.initial?.sources ?? const [],
+      people: _links,
+      createdAt: _createdAt,
+      updatedAt: now,
+      status: _status,
+      previousEventIds: _previousEventIds.toList()..sort(),
     );
+    final callback = widget.onSaved;
+    if (callback != null) {
+      await callback(saved);
+    } else if (mounted) {
+      Navigator.pop(context, saved);
+    }
   }
 }
 

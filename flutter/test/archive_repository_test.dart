@@ -97,6 +97,13 @@ void main() {
     expect(loaded.defaultPrecision, Precision.range);
   });
 
+  test('round-trips every color pairing in local settings', () async {
+    for (final color in AppPrimaryColor.values) {
+      await repository.saveSettings(AppSettings(primaryColor: color));
+      expect((await repository.loadSettings()).primaryColor, color);
+    }
+  });
+
   test(
     'falls back to defaults for damaged settings and survives restart',
     () async {
