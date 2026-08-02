@@ -748,7 +748,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Widget/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = local.munch.eventatlas.widget;
 				PRODUCT_NAME = EventAtlasWidget;
 				SKIP_INSTALL = YES;
@@ -769,7 +769,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Widget/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = local.munch.eventatlas.widget;
 				PRODUCT_NAME = EventAtlasWidget;
 				SKIP_INSTALL = YES;
@@ -789,7 +789,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Widget/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = local.munch.eventatlas.widget;
 				PRODUCT_NAME = EventAtlasWidget;
 				SKIP_INSTALL = YES;
