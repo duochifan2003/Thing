@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -9,6 +10,7 @@ import 'package:sqlite3_flutter_libs/sqlite3_flutter_libs.dart';
 
 import 'app_settings.dart';
 import 'archive.dart';
+import 'sync_models.dart';
 
 class ImportPreview {
   const ImportPreview({
@@ -133,6 +135,193 @@ class ArchiveRepository {
     );
   });
 
+  Future<String> loadDeviceId() => _serialize(() async {
+    final database = await _open();
+    final rows = database.select(
+      "SELECT value FROM metadata WHERE key = 'device_id'",
+    );
+    if (rows.isNotEmpty && (rows.single['value'] as String).isNotEmpty) {
+      return rows.single['value'] as String;
+    }
+    final id =
+        'device-${DateTime.now().toUtc().microsecondsSinceEpoch}-'
+        '${Random.secure().nextInt(1 << 32).toRadixString(16)}';
+    _transaction(
+      database,
+      () => database.execute(
+        "INSERT INTO metadata (key, value) VALUES ('device_id', ?)",
+        [id],
+      ),
+    );
+    return id;
+  });
+
+  Future<List<TrashEntry>> loadTrash() async {
+    final database = await _open();
+    return _readTrash(database);
+  }
+
+  Future<List<SyncTombstone>> loadTombstones() async {
+    final database = await _open();
+    return _readTombstones(database);
+  }
+
+  Future<SyncMetadata> loadSyncMetadata() async {
+    final database = await _open();
+    final rows = database.select(
+      "SELECT value FROM metadata WHERE key = 'sync_metadata'",
+    );
+    if (rows.isEmpty) return const SyncMetadata();
+    try {
+      final value = jsonDecode(rows.single['value'] as String);
+      if (value is! Map) return const SyncMetadata();
+      return SyncMetadata.fromJson(Map<String, dynamic>.from(value));
+    } catch (_) {
+      return const SyncMetadata(status: '同步状态已重置');
+    }
+  }
+
+  Future<void> saveSyncMetadata(SyncMetadata metadata) => _serialize(() async {
+    final database = await _open();
+    _transaction(
+      database,
+      () => database.execute(
+        "INSERT INTO metadata (key, value) VALUES ('sync_metadata', ?) "
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+        [jsonEncode(metadata.toJson())],
+      ),
+    );
+  });
+
+  Future<void> replaceSyncSnapshot(
+    Archive archive,
+    List<TrashEntry> trash,
+    List<SyncTombstone> tombstones,
+  ) => _serialize(() async {
+    _validateArchive(archive);
+    final database = await _open();
+    _transaction(database, () {
+      _replaceArchive(database, archive);
+      _writeTrash(database, trash);
+      _writeTombstones(database, tombstones);
+    });
+  });
+
+  Future<int> purgeExpiredTrash(TrashRetention retention, {DateTime? now}) =>
+      _serialize(() async {
+        final database = await _open();
+        final cutoff = (now ?? DateTime.now()).toUtc();
+        final entries = _readTrash(database);
+        final expired = entries
+            .where(
+              (entry) =>
+                  retention.days == 0 ||
+                  !entry.deletedAt
+                      .toUtc()
+                      .add(Duration(days: retention.days))
+                      .isAfter(cutoff),
+            )
+            .toList();
+        if (expired.isEmpty) return 0;
+        _transaction(database, () {
+          for (final entry in expired) {
+            database.execute(
+              'DELETE FROM revisions WHERE entity_type = ? AND entity_id = ?',
+              [entry.entityType.name, entry.id],
+            );
+            if (entry.entityType == EntityType.person) {
+              database.execute('DELETE FROM people WHERE id = ?', [entry.id]);
+            } else {
+              database.execute('DELETE FROM events WHERE id = ?', [entry.id]);
+            }
+          }
+          _writeTrash(
+            database,
+            entries.where((entry) => !expired.contains(entry)).toList(),
+          );
+        });
+        return expired.length;
+      });
+
+  Future<void> purgeTrashEntry(TrashEntry entry) => _serialize(() async {
+    final database = await _open();
+    _transaction(database, () {
+      final stored = _readTrash(database).any(
+        (item) => item.entityType == entry.entityType && item.id == entry.id,
+      );
+      if (!stored) throw const FormatException('回收站记录不存在。');
+      database.execute(
+        'DELETE FROM revisions WHERE entity_type = ? AND entity_id = ?',
+        [entry.entityType.name, entry.id],
+      );
+      if (entry.entityType == EntityType.person) {
+        database.execute('DELETE FROM people WHERE id = ?', [entry.id]);
+      } else {
+        database.execute('DELETE FROM events WHERE id = ?', [entry.id]);
+      }
+      _removeTrash(database, entry.entityType, entry.id);
+    });
+  });
+
+  Future<void> restoreTrash(TrashEntry entry) => _serialize(() async {
+    final database = await _open();
+    _transaction(database, () {
+      final stored = _readTrash(database)
+          .where(
+            (item) =>
+                item.id == entry.id && item.entityType == entry.entityType,
+          )
+          .firstOrNull;
+      if (stored == null) throw const FormatException('回收站记录不存在。');
+      if (entry.entityType == EntityType.person) {
+        final person = stored.person;
+        if (person == null || person.name.trim().isEmpty) {
+          throw const FormatException('人物资料不完整，无法恢复。');
+        }
+        if (database.select('SELECT id FROM people WHERE id = ?', [
+          entry.id,
+        ]).isNotEmpty) {
+          throw const FormatException('人物 ID 已被当前资料占用。');
+        }
+        _writePerson(database, person);
+      } else {
+        final event = stored.event;
+        if (event == null) throw const FormatException('事件资料不完整，无法恢复。');
+        if (database.select('SELECT id FROM events WHERE id = ?', [
+          entry.id,
+        ]).isNotEmpty) {
+          throw const FormatException('事件 ID 已被当前资料占用。');
+        }
+        _validateEvent(event);
+        for (final link in event.people) {
+          if (database.select('SELECT id FROM people WHERE id = ?', [
+            link.personId,
+          ]).isEmpty) {
+            throw const FormatException('关联人物已不存在，无法恢复事件。');
+          }
+        }
+        for (final predecessorId in event.previousEventIds) {
+          final predecessor = database.select(
+            'SELECT id, created_at FROM events WHERE id = ?',
+            [predecessorId],
+          );
+          if (predecessor.isEmpty ||
+              !_comesBefore(
+                DateTime.parse(predecessor.first['created_at'] as String),
+                predecessorId,
+                event.createdAt,
+                event.id,
+              )) {
+            throw const FormatException('前序事件已不存在或顺序无效，无法恢复事件。');
+          }
+        }
+        _writeEvent(database, event);
+      }
+      _removeTrash(database, entry.entityType, entry.id);
+      _removeTombstone(database, entry.entityType, entry.id);
+    });
+  });
+
   Future<ImportPreview> preview(Archive imported) async {
     final current = await load();
     return _preview(current, imported);
@@ -150,6 +339,8 @@ class ArchiveRepository {
       final exists = database.select('SELECT id FROM people WHERE id = ?', [
         person.id,
       ]).isNotEmpty;
+      _removeTrash(database, EntityType.person, person.id);
+      _removeTombstone(database, EntityType.person, person.id);
       _writePerson(database, person);
       _writeRevision(
         database,
@@ -224,6 +415,8 @@ class ArchiveRepository {
           throw const FormatException('只能关联创建时间更早的事件。');
         }
       }
+      _removeTrash(database, EntityType.event, event.id);
+      _removeTombstone(database, EntityType.event, event.id);
       _writeEvent(database, event);
       _writeRevision(
         database,
@@ -243,22 +436,73 @@ class ArchiveRepository {
 
   Future<bool> deletePerson(String id) => _serialize(() async {
     final database = await _open();
-    final deleted = _transaction(database, () {
+    return _transaction(database, () {
       if (database.select(
         'SELECT event_id FROM event_people WHERE person_id = ? LIMIT 1',
         [id],
       ).isNotEmpty) {
         return false;
       }
+      final rows = database.select('SELECT * FROM people WHERE id = ?', [id]);
+      if (rows.isEmpty) return false;
+      final deletedAt = DateTime.now().toUtc();
+      _writeTrash(database, [
+        ..._readTrash(database).where(
+          (entry) => !(entry.entityType == EntityType.person && entry.id == id),
+        ),
+        TrashEntry(
+          id: id,
+          entityType: EntityType.person,
+          deletedAt: deletedAt,
+          person: _personFromRow(rows.first),
+        ),
+      ]);
+      _writeTombstones(database, [
+        ..._readTombstones(database).where(
+          (entry) => !(entry.entityType == EntityType.person && entry.id == id),
+        ),
+        SyncTombstone(
+          id: id,
+          entityType: EntityType.person,
+          deletedAt: deletedAt,
+        ),
+      ]);
+      database.execute(
+        "DELETE FROM revisions WHERE entity_type = 'person' AND entity_id = ?",
+        [id],
+      );
       database.execute('DELETE FROM people WHERE id = ?', [id]);
       return true;
     });
-    return deleted;
   });
 
   Future<void> deleteEvent(String id) => _serialize(() async {
     final database = await _open();
     _transaction(database, () {
+      final rows = database.select('SELECT * FROM events WHERE id = ?', [id]);
+      if (rows.isEmpty) return;
+      final deletedAt = DateTime.now().toUtc();
+      _writeTrash(database, [
+        ..._readTrash(database).where(
+          (entry) => !(entry.entityType == EntityType.event && entry.id == id),
+        ),
+        TrashEntry(
+          id: id,
+          entityType: EntityType.event,
+          deletedAt: deletedAt,
+          event: _eventFromRow(database, rows.first),
+        ),
+      ]);
+      _writeTombstones(database, [
+        ..._readTombstones(database).where(
+          (entry) => !(entry.entityType == EntityType.event && entry.id == id),
+        ),
+        SyncTombstone(
+          id: id,
+          entityType: EntityType.event,
+          deletedAt: deletedAt,
+        ),
+      ]);
       database.execute(
         "DELETE FROM revisions WHERE entity_type = 'event' AND entity_id = ?",
         [id],
@@ -401,7 +645,104 @@ class ArchiveRepository {
     _writeMetadataTags(database, 'custom_tags', allTags);
     _writeMetadataTags(database, 'person_tags', personTags);
     _writeMetadataTags(database, 'event_tags', eventTags);
+    final personIds = archive.people.map((person) => person.id).toSet();
+    final eventIds = archive.events.map((event) => event.id).toSet();
+    _writeTrash(
+      database,
+      _readTrash(database).where((entry) {
+        return entry.entityType == EntityType.person
+            ? !personIds.contains(entry.id)
+            : !eventIds.contains(entry.id);
+      }).toList(),
+    );
+    _writeTombstones(
+      database,
+      _readTombstones(database).where((entry) {
+        return entry.entityType == EntityType.person
+            ? !personIds.contains(entry.id)
+            : !eventIds.contains(entry.id);
+      }).toList(),
+    );
   }
+
+  List<TrashEntry> _readTrash(Database database) {
+    final rows = database.select(
+      "SELECT value FROM metadata WHERE key = 'trash_bin'",
+    );
+    if (rows.isEmpty) return [];
+    try {
+      final value = jsonDecode(rows.single['value'] as String);
+      return value is List
+          ? value
+                .whereType<Map>()
+                .map(
+                  (item) =>
+                      TrashEntry.fromJson(Map<String, dynamic>.from(item)),
+                )
+                .toList()
+          : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  List<SyncTombstone> _readTombstones(Database database) {
+    final rows = database.select(
+      "SELECT value FROM metadata WHERE key = 'sync_tombstones'",
+    );
+    if (rows.isEmpty) return [];
+    try {
+      final value = jsonDecode(rows.single['value'] as String);
+      return value is List
+          ? value
+                .whereType<Map>()
+                .map(
+                  (item) =>
+                      SyncTombstone.fromJson(Map<String, dynamic>.from(item)),
+                )
+                .toList()
+          : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  void _writeTrash(Database database, List<TrashEntry> entries) =>
+      _writeMetadataJson(
+        database,
+        'trash_bin',
+        entries.map((entry) => entry.toJson()).toList(),
+      );
+
+  void _writeTombstones(Database database, List<SyncTombstone> entries) =>
+      _writeMetadataJson(
+        database,
+        'sync_tombstones',
+        entries.map((entry) => entry.toJson()).toList(),
+      );
+
+  void _writeMetadataJson(Database database, String key, Object value) =>
+      database.execute(
+        'INSERT INTO metadata (key, value) VALUES (?, ?) '
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+        [key, jsonEncode(value)],
+      );
+
+  void _removeTrash(Database database, EntityType type, String id) =>
+      _writeTrash(
+        database,
+        _readTrash(database)
+            .where((entry) => !(entry.entityType == type && entry.id == id))
+            .toList(),
+      );
+
+  void _removeTombstone(Database database, EntityType type, String id) =>
+      _writeTombstones(
+        database,
+        _readTombstones(database)
+            .where((entry) => !(entry.entityType == type && entry.id == id))
+            .toList(),
+      );
 
   List<String> _metadataTags(
     Database database,

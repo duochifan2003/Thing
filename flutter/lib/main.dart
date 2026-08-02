@@ -12,6 +12,8 @@ import 'app_settings.dart';
 import 'archive.dart';
 import 'archive_repository.dart';
 import 'event_location.dart';
+import 'sync_models.dart';
+import 'sync_service.dart';
 
 abstract final class AtlasPalette {
   static const paper = Color(0xfff7f7f1);
@@ -74,6 +76,9 @@ String _formatLocalDate(DateTime date) =>
     '${date.year.toString().padLeft(4, '0')}-'
     '${date.month.toString().padLeft(2, '0')}-'
     '${date.day.toString().padLeft(2, '0')}';
+
+String _shortDateTime(DateTime date) =>
+    date.toLocal().toIso8601String().replaceFirst('T', ' ').substring(0, 16);
 
 DateTime? _parseLocalDate(String value) {
   if (value.length != 10) return null;
@@ -481,33 +486,57 @@ class ArchiveHome extends StatefulWidget {
 class _ArchiveHomeState extends State<ArchiveHome> {
   late final ArchiveRepository _repository =
       widget.repository ?? ArchiveRepository();
+  late final SyncService _syncService = SyncService(_repository);
   Archive? _archive;
+  SyncMetadata _syncMetadata = const SyncMetadata();
   ArchiveView _view = ArchiveView.timeline;
   ArchiveFilters _filters = const ArchiveFilters();
   String _query = '';
   String? _personId;
   String? _eventId;
   String? _error;
+  bool _syncBusy = false;
 
   @override
   void initState() {
     super.initState();
-    _reload();
+    _start();
+  }
+
+  Future<void> _start() async {
+    await _repository.purgeExpiredTrash(widget.settings.trashRetention);
+    await _reload();
+    await _configureSync();
+  }
+
+  @override
+  void didUpdateWidget(covariant ArchiveHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.settings.syncEnabled != widget.settings.syncEnabled ||
+        oldWidget.settings.syncDirectory != widget.settings.syncDirectory) {
+      unawaited(_configureSync());
+    }
+    if (oldWidget.settings.trashRetention != widget.settings.trashRetention) {
+      unawaited(_repository.purgeExpiredTrash(widget.settings.trashRetention));
+    }
   }
 
   @override
   void dispose() {
-    _repository.close();
+    unawaited(_syncService.dispose());
+    unawaited(_repository.close());
     super.dispose();
   }
 
   Future<void> _reload() async {
     try {
       final archive = await _repository.load();
+      final syncMetadata = await _repository.loadSyncMetadata();
       unawaited(_updateWidget(archive));
       if (mounted) {
         setState(() {
           _archive = archive;
+          _syncMetadata = syncMetadata;
           _error = null;
         });
       }
@@ -516,10 +545,95 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     }
   }
 
+  Future<void> _configureSync() async {
+    await _syncService.stopWatching();
+    final directory = widget.settings.syncDirectory;
+    if (!widget.settings.syncEnabled ||
+        directory == null ||
+        directory.isEmpty) {
+      if (!mounted) return;
+      setState(() {});
+      return;
+    }
+    try {
+      await _syncService.watch(directory, () => _syncNow(silent: false));
+      await _syncNow(silent: true);
+    } catch (_) {
+      if (mounted) _notice('无法监视同步目录。');
+    }
+  }
+
+  Future<void> _syncNow({
+    bool silent = false,
+    Map<String, SyncConflictChoice> resolutions = const {},
+    bool confirmInitialMerge = false,
+  }) async {
+    final directory = widget.settings.syncDirectory;
+    if (!widget.settings.syncEnabled ||
+        directory == null ||
+        directory.isEmpty) {
+      return;
+    }
+    if (_syncBusy) return;
+    _syncBusy = true;
+    try {
+      final report = await _syncService.synchronize(
+        directory: directory,
+        retention: widget.settings.trashRetention,
+        resolutions: resolutions,
+        confirmInitialMerge: confirmInitialMerge,
+      );
+      if (!mounted) return;
+      setState(() => _syncMetadata = report.metadata);
+      if (report.retentionDays != null &&
+          report.retentionDays != widget.settings.trashRetention.days) {
+        final save = widget.onSettingsChanged;
+        if (save != null) {
+          await save(
+            widget.settings.copyWith(
+              trashRetention: trashRetentionFromDays(report.retentionDays!),
+            ),
+          );
+        }
+      }
+      if (report.applied) await _reload();
+      if (report.outcome == SyncOutcome.failed && mounted) {
+        _notice(report.message ?? '同步失败。');
+      } else if (report.outcome == SyncOutcome.preview && !silent && mounted) {
+        final confirmed = await _confirm(
+          '确认首次合并',
+          report.message ?? '确认合并本机和同步文件中的档案吗？',
+          confirmLabel: '确认合并',
+        );
+        if (confirmed && mounted) {
+          _syncBusy = false;
+          await _syncNow(confirmInitialMerge: true);
+        }
+      } else if (report.outcome == SyncOutcome.conflicts &&
+          !silent &&
+          mounted) {
+        final choices = await showDialog<Map<String, SyncConflictChoice>>(
+          context: context,
+          builder: (_) =>
+              SyncConflictDialog(conflicts: report.metadata.conflicts),
+        );
+        if (choices != null && mounted) {
+          _syncBusy = false;
+          await _syncNow(resolutions: choices);
+        }
+      }
+    } catch (_) {
+      if (mounted) _notice('同步失败，本机资料保持不变。');
+    } finally {
+      _syncBusy = false;
+    }
+  }
+
   Future<void> _write(Future<void> Function() action) async {
     try {
       await action();
       await _reload();
+      await _syncNow(silent: true);
     } on FormatException catch (error) {
       _notice(error.message.toString());
     } catch (_) {
@@ -650,14 +764,31 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   }
 
   Future<void> _deletePerson(Person person) async {
-    if (!await _confirm('删除人物', '确定删除「${person.name}」吗？此操作不可撤销。')) return;
-    final deleted = await _repository.deletePerson(person.id);
-    if (!deleted) {
-      _notice('该人物仍关联事件，请先删除或编辑相关事件。');
-      return;
+    final immediate =
+        widget.settings.trashRetention == TrashRetention.immediate;
+    final confirmed = await _confirm(
+      immediate ? '永久删除人物' : '移入回收站',
+      immediate
+          ? '确定永久删除「${person.name}」吗？删除后无法恢复。'
+          : '确定将「${person.name}」移入回收站吗？可在保留期限内恢复。',
+      confirmLabel: immediate ? '永久删除' : '移入回收站',
+    );
+    if (!confirmed) return;
+    try {
+      final deleted = await _repository.deletePerson(person.id);
+      if (!deleted) {
+        _notice('该人物仍关联事件，请先删除或编辑相关事件。');
+        return;
+      }
+      if (immediate) {
+        await _repository.purgeExpiredTrash(TrashRetention.immediate);
+      }
+      _clearSelection();
+      await _reload();
+      await _syncNow(silent: true);
+    } catch (_) {
+      _notice('删除失败，资料尚未改变。');
     }
-    _clearSelection();
-    await _reload();
   }
 
   Future<void> _cancelEvent(EventItem event) async {
@@ -703,8 +834,23 @@ class _ArchiveHomeState extends State<ArchiveHome> {
   }
 
   Future<void> _deleteEvent(EventItem event) async {
-    if (!await _confirm('永久删除事件', '确定永久删除「${event.title}」吗？此操作不可撤销。')) return;
-    await _write(() => _repository.deleteEvent(event.id));
+    final immediate =
+        widget.settings.trashRetention == TrashRetention.immediate;
+    if (!await _confirm(
+      immediate ? '永久删除事件' : '移入回收站',
+      immediate
+          ? '确定永久删除「${event.title}」吗？删除后无法恢复。'
+          : '确定将「${event.title}」移入回收站吗？可在保留期限内恢复。',
+      confirmLabel: immediate ? '永久删除' : '移入回收站',
+    )) {
+      return;
+    }
+    await _write(() async {
+      await _repository.deleteEvent(event.id);
+      if (immediate) {
+        await _repository.purgeExpiredTrash(TrashRetention.immediate);
+      }
+    });
     _clearSelection();
   }
 
@@ -778,6 +924,47 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     }
   }
 
+  Future<void> _chooseSyncDirectory() async {
+    try {
+      final directory = await getDirectoryPath(confirmButtonText: '选择同步目录');
+      if (directory == null || !mounted) return;
+      final save = widget.onSettingsChanged;
+      if (save == null) return;
+      await save(
+        widget.settings.copyWith(syncDirectory: directory, syncEnabled: true),
+      );
+      if (mounted) _notice('同步目录已保存。');
+    } catch (_) {
+      if (mounted) _notice('无法选择同步目录。');
+    }
+  }
+
+  Future<void> _openTrash() async {
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => TrashDialog(
+          retention: widget.settings.trashRetention,
+          loadEntries: _repository.loadTrash,
+          onRestore: (entry) async {
+            await _repository.restoreTrash(entry);
+            await _reload();
+            await _syncNow(silent: true);
+          },
+          onDeleteForever: (entry) async {
+            await _repository.purgeTrashEntry(entry);
+            await _reload();
+            await _syncNow(silent: true);
+          },
+        ),
+      );
+    } on FormatException catch (error) {
+      _notice(error.message.toString());
+    } catch (_) {
+      _notice('回收站操作失败。');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final archive = _archive;
@@ -828,6 +1015,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
           ),
           ArchiveView.settings => SettingsPage(
             settings: widget.settings,
+            syncMetadata: _syncMetadata,
             onChanged: (settings) async {
               final save = widget.onSettingsChanged;
               if (save == null) return;
@@ -839,6 +1027,9 @@ class _ArchiveHomeState extends State<ArchiveHome> {
             },
             onImport: _importArchive,
             onExport: _exportArchive,
+            onChooseSyncDirectory: _chooseSyncDirectory,
+            onSyncNow: () => _syncNow(silent: false),
+            onOpenTrash: _openTrash,
           ),
         };
         final workspace = Column(
@@ -2519,20 +2710,165 @@ class SettingsPage extends StatelessWidget {
   const SettingsPage({
     super.key,
     required this.settings,
+    this.syncMetadata = const SyncMetadata(),
     required this.onChanged,
     required this.onImport,
     required this.onExport,
+    this.onChooseSyncDirectory,
+    this.onSyncNow,
+    this.onOpenTrash,
   });
 
   final AppSettings settings;
+  final SyncMetadata syncMetadata;
   final Future<void> Function(AppSettings settings) onChanged;
   final Future<void> Function() onImport;
   final Future<void> Function() onExport;
+  final Future<void> Function()? onChooseSyncDirectory;
+  final Future<void> Function()? onSyncNow;
+  final Future<void> Function()? onOpenTrash;
 
   void _change(AppSettings next) => unawaited(onChanged(next));
 
   @override
   Widget build(BuildContext context) {
+    final directory = settings.syncDirectory;
+    final chooseDirectory = onChooseSyncDirectory ?? () async {};
+    final syncNow = onSyncNow ?? () async {};
+    final openTrash = onOpenTrash ?? () async {};
+    final syncSection = _settingsSection(
+      context,
+      title: '自托管同步与回收站',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('启用同步'),
+            subtitle: Text(
+              directory ?? '选择一个由 Syncthing 或 Nextcloud Desktop 管理的文件夹。',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            value: settings.syncEnabled,
+            onChanged: (enabled) {
+              if (enabled && directory == null) {
+                unawaited(chooseDirectory());
+              } else {
+                _change(settings.copyWith(syncEnabled: enabled));
+              }
+            },
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: chooseDirectory,
+                icon: const Icon(Icons.folder_open_outlined),
+                label: Text(directory == null ? '选择同步目录' : '更换目录'),
+              ),
+              FilledButton.icon(
+                onPressed: settings.syncEnabled && directory != null
+                    ? syncNow
+                    : null,
+                icon: const Icon(Icons.sync),
+                label: const Text('立即同步'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '状态：${syncMetadata.status}${syncMetadata.lastSyncAt == null ? '' : ' · 最近同步 ${_shortDateTime(syncMetadata.lastSyncAt!)}'}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (syncMetadata.error != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              syncMetadata.error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+          if (syncMetadata.conflicts.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: syncNow,
+              icon: const Icon(Icons.warning_amber_outlined),
+              label: Text('处理 ${syncMetadata.conflicts.length} 条冲突'),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '回收站保留期限',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<TrashRetention>(
+                        value: settings.trashRetention,
+                        isExpanded: true,
+                        items: TrashRetention.values
+                            .map(
+                              (value) => DropdownMenuItem(
+                                value: value,
+                                child: Text(value.label),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) async {
+                          if (value == null) return;
+                          if (value == TrashRetention.immediate) {
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('立即清理回收站？'),
+                                content: const Text('现有回收站记录会永久删除，之后无法恢复。'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, false),
+                                    child: const Text('取消'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    child: const Text('永久清理'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed != true) return;
+                          }
+                          _change(settings.copyWith(trashRetention: value));
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton.icon(
+                onPressed: openTrash,
+                icon: const Icon(Icons.delete_sweep_outlined),
+                label: const Text('打开回收站'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '同步文件只包含档案、回收站和删除标记；主题、主色、默认时间精度及同步路径只保存在本机。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
     final themeSection = _settingsSection(
       context,
       title: '主题模式',
@@ -2674,6 +3010,7 @@ class SettingsPage extends StatelessWidget {
                         ],
                       ),
               ),
+              syncSection,
             ],
           ),
         ),
@@ -2699,6 +3036,220 @@ class SettingsPage extends StatelessWidget {
       ),
     ),
   );
+}
+
+class SyncConflictDialog extends StatefulWidget {
+  const SyncConflictDialog({super.key, required this.conflicts});
+
+  final List<SyncConflict> conflicts;
+
+  @override
+  State<SyncConflictDialog> createState() => _SyncConflictDialogState();
+}
+
+class _SyncConflictDialogState extends State<SyncConflictDialog> {
+  late final Map<String, SyncConflictChoice> _choices = {
+    for (final conflict in widget.conflicts)
+      conflict.key: SyncConflictChoice.local,
+  };
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('同步冲突'),
+    content: SizedBox(
+      width: 560,
+      child: ListView.separated(
+        shrinkWrap: true,
+        itemCount: widget.conflicts.length,
+        separatorBuilder: (_, _) => const Divider(height: 20),
+        itemBuilder: (context, index) {
+          final conflict = widget.conflicts[index];
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(conflict.label),
+            subtitle: Text('${conflict.entityType.label} · 选择保留本机或同步文件版本'),
+            trailing: SegmentedButton<SyncConflictChoice>(
+              segments: const [
+                ButtonSegment(
+                  value: SyncConflictChoice.local,
+                  label: Text('本机'),
+                ),
+                ButtonSegment(
+                  value: SyncConflictChoice.remote,
+                  label: Text('远端'),
+                ),
+              ],
+              selected: {_choices[conflict.key]!},
+              showSelectedIcon: false,
+              onSelectionChanged: (selection) {
+                if (selection.isNotEmpty) {
+                  setState(() => _choices[conflict.key] = selection.first);
+                }
+              },
+            ),
+          );
+        },
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('稍后处理'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, _choices),
+        child: const Text('应用选择'),
+      ),
+    ],
+  );
+}
+
+class TrashDialog extends StatefulWidget {
+  const TrashDialog({
+    super.key,
+    required this.retention,
+    required this.loadEntries,
+    required this.onRestore,
+    required this.onDeleteForever,
+  });
+
+  final TrashRetention retention;
+  final Future<List<TrashEntry>> Function() loadEntries;
+  final Future<void> Function(TrashEntry entry) onRestore;
+  final Future<void> Function(TrashEntry entry) onDeleteForever;
+
+  @override
+  State<TrashDialog> createState() => _TrashDialogState();
+}
+
+class _TrashDialogState extends State<TrashDialog> {
+  List<TrashEntry> _entries = const [];
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final entries = await widget.loadEntries();
+      if (mounted) {
+        setState(() {
+          _entries = entries;
+          _error = null;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = '无法读取回收站。';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('回收站'),
+    content: SizedBox(
+      width: 620,
+      height: 420,
+      child: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? Center(child: Text(_error!))
+          : _entries.isEmpty
+          ? const EmptyState(title: '回收站为空', text: '删除的人物和事件会在这里保留一段时间。')
+          : ListView.separated(
+              itemCount: _entries.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final entry = _entries[index];
+                final expires = entry.deletedAt.toLocal().add(
+                  Duration(days: widget.retention.days),
+                );
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  leading: Icon(
+                    entry.entityType == EntityType.person
+                        ? Icons.person_outline
+                        : Icons.event_outlined,
+                  ),
+                  title: Text(entry.title),
+                  subtitle: Text(
+                    '${entry.entityType.label} · 删除于 ${_shortDateTime(entry.deletedAt)}'
+                    '${widget.retention == TrashRetention.immediate ? '' : ' · 到期 ${_shortDateTime(expires)}'}',
+                  ),
+                  trailing: Wrap(
+                    spacing: 4,
+                    children: [
+                      TextButton(
+                        onPressed: () => _restore(entry),
+                        child: const Text('恢复'),
+                      ),
+                      IconButton(
+                        tooltip: '永久删除',
+                        onPressed: () => _deleteForever(entry),
+                        icon: const Icon(Icons.delete_forever_outlined),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('关闭'),
+      ),
+    ],
+  );
+
+  Future<void> _restore(TrashEntry entry) async {
+    try {
+      await widget.onRestore(entry);
+      await _refresh();
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message.toString());
+    } catch (_) {
+      if (mounted) setState(() => _error = '恢复失败，请检查关联人物和前序事件。');
+    }
+  }
+
+  Future<void> _deleteForever(TrashEntry entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('永久删除'),
+        content: Text('确定永久删除「${entry.title}」吗？删除后无法恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('永久删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.onDeleteForever(entry);
+      await _refresh();
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message.toString());
+    } catch (_) {
+      if (mounted) setState(() => _error = '永久删除失败。');
+    }
+  }
 }
 
 class CustomTagsPage extends StatefulWidget {
