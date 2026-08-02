@@ -143,8 +143,8 @@ struct EventAtlasWidgetView: View {
     Group {
       switch entry.state {
       case .content(let events): content(events)
-      case .empty: message("还没有事件", detail: "打开事件录后新建记录")
-      case .unavailable: message("无法读取档案", detail: "打开事件录后重试")
+      case .empty: message("还没有事件", detail: "打开 Thing 后新建记录")
+      case .unavailable: message("无法读取档案", detail: "打开 Thing 后重试")
       }
     }
     .padding(contentInsets)
@@ -170,7 +170,7 @@ struct EventAtlasWidgetView: View {
     if family == .systemSmall, let event = events.first {
       VStack(alignment: .leading, spacing: 6) {
         HStack(spacing: 6) {
-          Text("事件录")
+          Text("Thing")
             .font(.system(size: 12, weight: .bold))
           Spacer(minLength: 0)
           Circle().fill(AtlasColor.accent).frame(width: 6, height: 6)
@@ -198,7 +198,7 @@ struct EventAtlasWidgetView: View {
 
       VStack(alignment: .leading, spacing: 10) {
         HStack(alignment: .firstTextBaseline) {
-          Text("事件录")
+          Text("Thing")
             .font(.system(size: 14, weight: .semibold))
           Spacer(minLength: 0)
           Text("今天 · \(todayLabel) · \(visibleEvents.count) 条")
@@ -226,7 +226,7 @@ struct EventAtlasWidgetView: View {
 
       VStack(alignment: .leading, spacing: 12) {
         HStack(alignment: .firstTextBaseline) {
-          Text("事件录")
+          Text("Thing")
             .font(.system(size: 16, weight: .bold))
           Spacer(minLength: 0)
           Text("今天 · \(todayLabel) · \(events.count) 条")
@@ -253,7 +253,7 @@ struct EventAtlasWidgetView: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     } else {
-      message("还没有事件", detail: "打开事件录后新建记录")
+      message("还没有事件", detail: "打开 Thing 后新建记录")
     }
   }
 
@@ -360,7 +360,7 @@ struct EventAtlasWidgetView: View {
 
   private func message(_ title: String, detail: String) -> some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("事件录")
+      Text("Thing")
         .font(.system(size: 12, weight: .bold))
       Spacer(minLength: 0)
       HStack(alignment: .top, spacing: 9) {

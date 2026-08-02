@@ -256,7 +256,7 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '事件录',
+      title: 'Thing',
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -1328,8 +1328,8 @@ class _Brand extends StatelessWidget {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('事件录', style: TextStyle(fontWeight: FontWeight.w700)),
-          Text('PERSON · EVENT ATLAS', style: TextStyle(fontSize: 9)),
+          Text('Thing', style: TextStyle(fontWeight: FontWeight.w700)),
+          Text('THING · ARCHIVE', style: TextStyle(fontSize: 9)),
         ],
       ),
     ],
@@ -1476,7 +1476,7 @@ class _Header extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'PERSON · EVENT ATLAS',
+                'THING · ARCHIVE',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: Theme.of(context).colorScheme.primary,
                   fontWeight: FontWeight.w700,

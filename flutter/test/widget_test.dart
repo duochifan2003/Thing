@@ -160,14 +160,14 @@ void main() {
       version: '0.1.5',
       tagName: 'v0.1.5',
       htmlUrl: Uri.parse(
-        'https://github.com/duochifan2003/person-event-atlas/releases/tag/v0.1.5',
+        'https://github.com/duochifan2003/Thing/releases/tag/v0.1.5',
       ),
       notes: '修复更新功能。',
       assets: [
         AppUpdateAsset(
-          name: 'EventAtlas-macOS.dmg',
+          name: 'Thing-macOS.dmg',
           downloadUrl: Uri.parse(
-            'https://github.com/duochifan2003/person-event-atlas/releases/download/v0.1.5/EventAtlas-macOS.dmg',
+            'https://github.com/duochifan2003/Thing/releases/download/v0.1.5/Thing-macOS.dmg',
           ),
         ),
       ],
