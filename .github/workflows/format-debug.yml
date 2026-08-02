@@ -1,0 +1,36 @@
+name: Format debug
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Format app update source
+        run: dart format lib/app_update.dart
+
+      - name: Upload formatted source
+        uses: actions/upload-artifact@v4
+        with:
+          name: formatted-app-update
+          path: flutter/lib/app_update.dart
