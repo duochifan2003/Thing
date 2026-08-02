@@ -1,6 +1,9 @@
 name: Format debug
 
 on:
+  push:
+    branches:
+      - agent/fix-windows-auto-update
   workflow_dispatch:
 
 permissions:
