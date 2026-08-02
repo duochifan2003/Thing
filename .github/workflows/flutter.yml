@@ -37,3 +37,39 @@ jobs:
 
       - name: Test
         run: flutter test
+
+  windows:
+    name: Windows build
+    needs: test
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: flutter
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Package Windows release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath build/EventAtlas-windows-${{ github.sha }}.zip
+
+      - name: Upload Windows release artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: EventAtlas-windows-${{ github.sha }}
+          path: flutter/build/EventAtlas-windows-${{ github.sha }}.zip
