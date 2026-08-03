@@ -5,6 +5,7 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 flutter_dir="$repo_root/flutter"
 version=$(sed -n 's/^version: //p' "$flutter_dir/pubspec.yaml" | head -n 1)
 app_version=${version%%+*}
+app_build=${version#*+}
 output=${1:-"$flutter_dir/build/Thing-macOS-v$app_version.dmg"}
 stage=$(mktemp -d "${TMPDIR:-/tmp}/thing-dmg.XXXXXX")
 
@@ -14,7 +15,9 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$flutter_dir"
-flutter build macos --release --no-pub
+flutter build macos --release --no-pub \
+  --dart-define=APP_VERSION="$app_version" \
+  --dart-define=APP_BUILD="$app_build"
 ditto "build/macos/Build/Products/Release/Thing.app" "$stage/Thing.app"
 ln -s /Applications "$stage/Applications"
 hdiutil create \

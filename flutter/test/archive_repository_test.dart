@@ -80,13 +80,13 @@ void main() {
     expect((await repository.loadSettings()).themeMode, AppThemeMode.system);
     expect(
       (await repository.loadSettings()).primaryColor,
-      AppPrimaryColor.forestGreen,
+      AppPrimaryColor.mintGreenCharcoal,
     );
     expect((await repository.loadSettings()).defaultPrecision, Precision.day);
 
     const settings = AppSettings(
       themeMode: AppThemeMode.dark,
-      primaryColor: AppPrimaryColor.oceanBlue,
+      primaryColor: AppPrimaryColor.royalBlueYellow,
       defaultPrecision: Precision.range,
       syncDirectory: '/tmp/shared',
       syncDirectoryBookmark: 'bookmark-data',
@@ -95,7 +95,7 @@ void main() {
 
     final loaded = await repository.loadSettings();
     expect(loaded.themeMode, AppThemeMode.dark);
-    expect(loaded.primaryColor, AppPrimaryColor.oceanBlue);
+    expect(loaded.primaryColor, AppPrimaryColor.royalBlueYellow);
     expect(loaded.defaultPrecision, Precision.range);
     expect(loaded.syncDirectory, '/tmp/shared');
     expect(loaded.syncDirectoryBookmark, 'bookmark-data');
@@ -119,7 +119,7 @@ void main() {
       await first.saveSettings(
         const AppSettings(
           themeMode: AppThemeMode.light,
-          primaryColor: AppPrimaryColor.terracotta,
+          primaryColor: AppPrimaryColor.brightOrangeDarkTeal,
           defaultPrecision: Precision.month,
         ),
       );
@@ -147,7 +147,7 @@ void main() {
       expect((await damaged.loadSettings()).themeMode, AppThemeMode.system);
       expect(
         (await damaged.loadSettings()).primaryColor,
-        AppPrimaryColor.forestGreen,
+        AppPrimaryColor.mintGreenCharcoal,
       );
       expect((await damaged.loadSettings()).defaultPrecision, Precision.day);
     },
@@ -156,7 +156,7 @@ void main() {
   test('archive replacement preserves local settings', () async {
     const settings = AppSettings(
       themeMode: AppThemeMode.dark,
-      primaryColor: AppPrimaryColor.terracotta,
+      primaryColor: AppPrimaryColor.brightOrangeDarkTeal,
       defaultPrecision: Precision.year,
     );
     await repository.saveSettings(settings);
@@ -171,7 +171,7 @@ void main() {
     expect(await repository.loadSettings(), isA<AppSettings>());
     final loaded = await repository.loadSettings();
     expect(loaded.themeMode, AppThemeMode.dark);
-    expect(loaded.primaryColor, AppPrimaryColor.terracotta);
+    expect(loaded.primaryColor, AppPrimaryColor.brightOrangeDarkTeal);
     expect(loaded.defaultPrecision, Precision.year);
     expect((await repository.load()).customTags, ['档案标签']);
   });

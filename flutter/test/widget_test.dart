@@ -104,9 +104,7 @@ void main() {
     expect(find.text('事件时间线'), findsOneWidget);
   });
 
-  testWidgets('uses distinct semantic colors for event statuses', (
-    tester,
-  ) async {
+  testWidgets('uses shared semantic colors for event statuses', (tester) async {
     final events = EventStatus.values
         .map(
           (status) => seedArchive.events.first.copyWith(
@@ -128,10 +126,7 @@ void main() {
 
     final chips = tester.widgetList<Chip>(find.byType(Chip)).toList();
     expect(chips, hasLength(EventStatus.values.length));
-    expect(
-      chips.map((chip) => chip.backgroundColor).toSet(),
-      hasLength(EventStatus.values.length),
-    );
+    expect(chips.map((chip) => chip.backgroundColor).toSet(), hasLength(2));
   });
 
   testWidgets('opens settings with data management and theme controls', (
@@ -153,35 +148,34 @@ void main() {
     expect(find.text('跟随系统'), findsOneWidget);
     expect(find.byType(SegmentedButton<AppThemeMode>), findsOneWidget);
     expect(find.byType(RadioListTile<AppThemeMode>), findsNothing);
-    expect(find.text('森林绿'), findsOneWidget);
     expect(find.text('莓红 · 燕麦色'), findsOneWidget);
     expect(find.text('薄荷绿 · 炭灰色'), findsOneWidget);
     expect(find.text('宝蓝 · 明黄'), findsOneWidget);
     expect(find.text('亮橙 · 深青色'), findsOneWidget);
     expect(find.text('奶油白 · 草木绿'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('primary-berryRedOat')));
-    await tester.pumpAndSettle();
-    final paletteApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
-    expect(paletteApp.theme?.colorScheme.primary, const Color(0xffb50031));
-    expect(paletteApp.theme?.colorScheme.secondary, const Color(0xffdac9b1));
-    expect(
-      paletteApp.theme?.scaffoldBackgroundColor,
-      isNot(const Color(0xfff7f7f1)),
-    );
-    expect(paletteApp.theme?.cardTheme.color, isNot(const Color(0xfffffefa)));
+    const palettes = {
+      'berryRedOat': (0xffb50031, 0xffdac9b1),
+      'mintGreenCharcoal': (0xff7dffde, 0xff2f2f2f),
+      'royalBlueYellow': (0xff012bac, 0xffffcf00),
+      'brightOrangeDarkTeal': (0xffff7400, 0xff253636),
+      'creamWhiteLeafGreen': (0xfff6f9e4, 0xff67b972),
+    };
+    for (final entry in palettes.entries) {
+      await tester.tap(find.byKey(ValueKey('primary-${entry.key}')));
+      await tester.pumpAndSettle();
+      final paletteApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expect(paletteApp.theme?.colorScheme.primary, Color(entry.value.$1));
+      expect(paletteApp.theme?.colorScheme.secondary, Color(entry.value.$2));
+    }
 
     await tester.tap(find.text('深色'));
     await tester.pumpAndSettle();
 
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.themeMode, ThemeMode.dark);
-    expect(app.darkTheme?.colorScheme.primary, const Color(0xffb50031));
-    expect(
-      app.darkTheme?.scaffoldBackgroundColor,
-      isNot(const Color(0xff0f1012)),
-    );
-    expect(app.darkTheme?.cardTheme.color, isNot(const Color(0xff222529)));
+    expect(app.darkTheme?.colorScheme.primary, const Color(0xfff6f9e4));
+    expect(app.darkTheme?.colorScheme.secondary, const Color(0xff67b972));
   });
 
   testWidgets('changes the new event precision preference', (tester) async {
