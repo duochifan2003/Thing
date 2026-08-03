@@ -14,16 +14,50 @@ cleanup() {
 }
 trap cleanup EXIT
 
+mkdir -p "$(dirname "$output")"
 cd "$flutter_dir"
 flutter build macos --release --no-pub \
   --dart-define=APP_VERSION="$app_version" \
   --dart-define=APP_BUILD="$app_build"
-ditto "build/macos/Build/Products/Release/Thing.app" "$stage/Thing.app"
-ln -s /Applications "$stage/Applications"
-hdiutil create \
-  -volname Thing \
-  -srcfolder "$stage" \
-  -fs HFS+ \
-  -format UDZO \
-  -ov \
-  "$output"
+swift "$repo_root/scripts/create-macos-dmg-background.swift" \
+  "$stage/installation-guide.png"
+
+if ! python3 -c 'import dmgbuild' >/dev/null 2>&1; then
+  echo "Missing dmgbuild. Install it with: python3 -m pip install --user dmgbuild" >&2
+  exit 1
+fi
+
+python3 - "$output" \
+  "$flutter_dir/build/macos/Build/Products/Release/Thing.app" \
+  "$stage/installation-guide.png" <<'PY'
+import sys
+
+from dmgbuild import build_dmg
+
+output, app_path, background_path = sys.argv[1:]
+
+build_dmg(
+    output,
+    "Thing Installer",
+    settings={
+        "files": [(app_path, "Thing.app")],
+        "symlinks": {"Applications": "/Applications"},
+        "background": background_path,
+        "format": "UDZO",
+        "filesystem": "HFS+",
+        "default_view": "icon-view",
+        "window_rect": ((120, 120), (900, 560)),
+        "show_toolbar": False,
+        "show_status_bar": False,
+        "show_sidebar": False,
+        "show_pathbar": False,
+        "icon_size": 96,
+        "text_size": 13,
+        "arrange_by": None,
+        "icon_locations": {
+            "Thing.app": (220, 280),
+            "Applications": (680, 280),
+        },
+    },
+)
+PY

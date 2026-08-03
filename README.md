@@ -35,7 +35,7 @@ Thing 是一个本地优先的人物与事件档案工具。它适合整理人�
 ## macOS 安装
 
 1. 在最新 Release 下载 macOS DMG。
-2. 打开 DMG，将 `Thing.app` 拖到“应用程序”文件夹。
+2. 打开 DMG，按窗口中的图示将 `Thing.app` 拖到“应用程序”文件夹。
 3. 第一次打开时，如果 macOS 提示无法验证开发者，请在 Finder 中右键 Thing，选择“打开”，再确认打开；也可以到“系统设置 → 隐私与安全性”允许本次启动。
 4. 打开应用后，在“设置 → 应用更新”中检查后续版本。
 
@@ -171,6 +171,13 @@ flutter analyze
 flutter test
 flutter build macos --debug
 flutter build windows --release
+```
+
+在 macOS 上打包带安装与操作指南的 DMG：
+
+```bash
+python3 -m pip install --user dmgbuild
+sh scripts/package-macos-dmg.sh
 ```
 
 Android 请在实际设备或模拟器上额外验证：

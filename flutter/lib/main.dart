@@ -321,7 +321,12 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
   final onPrimary = _onPaletteColor(primary);
   final onCompanion = _onPaletteColor(companion);
   final onSurface = brightness == Brightness.dark ? Colors.white : Colors.black;
-  final error = brightness == Brightness.dark ? Colors.white : Colors.black;
+  final error = Color(
+    primaryColor == AppPrimaryColor.berryRedOat
+        ? AppPrimaryColor.royalBlueYellow.value
+        : AppPrimaryColor.berryRedOat.value,
+  );
+  final onError = _onPaletteColor(error);
   final scheme =
       (brightness == Brightness.dark ? ColorScheme.dark : ColorScheme.light)(
         primary: primary,
@@ -335,11 +340,9 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
         tertiary: companion,
         onTertiary: onCompanion,
         error: error,
-        onError: brightness == Brightness.dark ? Colors.black : Colors.white,
-        errorContainer: error,
-        onErrorContainer: brightness == Brightness.dark
-            ? Colors.black
-            : Colors.white,
+        onError: onError,
+        errorContainer: error.withAlpha(0x26),
+        onErrorContainer: onSurface,
         surface: surface,
         onSurface: onSurface,
         surfaceDim: canvas,
@@ -353,8 +356,8 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
           canvas,
         ),
         onSurfaceVariant: onSurface.withAlpha(170),
-        outline: onSurface.withAlpha(120),
-        outlineVariant: surfaceHigh,
+        outline: primary.withAlpha(150),
+        outlineVariant: primary.withAlpha(76),
         inverseSurface: onSurface,
         onInverseSurface: onPrimary,
         inversePrimary: surfaceHigh,
@@ -370,7 +373,8 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
     colorScheme: scheme,
     cardTheme: CardThemeData(
       color: surfaceLow,
-      elevation: 0,
+      elevation: 3,
+      shadowColor: primary.withAlpha(112),
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       surfaceTintColor: Colors.transparent,
@@ -422,7 +426,7 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
     ),
     chipTheme: ChipThemeData(
       backgroundColor: surfaceLow,
-      side: BorderSide.none,
+      side: BorderSide(color: scheme.outline),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(8)),
       ),
@@ -474,7 +478,10 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
         borderRadius: BorderRadius.all(Radius.circular(12)),
       ),
     ),
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
+      backgroundColor: primary,
+      foregroundColor: onPrimary,
+      elevation: 4,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(16)),
       ),
