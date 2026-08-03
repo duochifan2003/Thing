@@ -23,40 +23,42 @@ Color _detailSurface(BuildContext context) =>
     Theme.of(context).colorScheme.surface;
 
 Color _detailGroupSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.primary;
+    Theme.of(context).colorScheme.surfaceContainerHigh;
 
 Color _personSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.primary;
+    Theme.of(context).colorScheme.surfaceContainer;
 
 Color _personOnSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.onPrimary;
+    Theme.of(context).colorScheme.onSurface;
 
 Color _personTagSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.secondary;
+    Theme.of(context).colorScheme.surfaceContainerHigh;
 
 Color _personTagOnSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.onSecondary;
+    Theme.of(context).colorScheme.onSurface;
 
 Color _eventTagSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.secondary;
+    Theme.of(context).colorScheme.surfaceContainerHigh;
 
 Color _eventTagOnSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.onSecondary;
+    Theme.of(context).colorScheme.onSurface;
 
 Color _eventStatusColor(BuildContext context, EventStatus status) =>
     switch (status) {
-      EventStatus.scheduled => Theme.of(context).colorScheme.secondary,
+      EventStatus.scheduled => Theme.of(
+        context,
+      ).colorScheme.surfaceContainerHigh,
       EventStatus.active => Theme.of(context).colorScheme.primary,
-      EventStatus.completed => Theme.of(context).colorScheme.secondary,
-      EventStatus.cancelled => Theme.of(context).colorScheme.primary,
+      EventStatus.completed => Theme.of(context).colorScheme.surfaceContainer,
+      EventStatus.cancelled => Theme.of(context).colorScheme.error,
     };
 
 Color _eventStatusTextColor(BuildContext context, EventStatus status) =>
     switch (status) {
-      EventStatus.scheduled => Theme.of(context).colorScheme.onSecondary,
+      EventStatus.scheduled => Theme.of(context).colorScheme.onSurface,
       EventStatus.active => Theme.of(context).colorScheme.onPrimary,
-      EventStatus.completed => Theme.of(context).colorScheme.onSecondary,
-      EventStatus.cancelled => Theme.of(context).colorScheme.onPrimary,
+      EventStatus.completed => Theme.of(context).colorScheme.onSurface,
+      EventStatus.cancelled => Theme.of(context).colorScheme.onError,
     };
 
 String _formatLocalDate(DateTime date) =>
@@ -292,14 +294,18 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
         AppThemeMode.dark => ThemeMode.dark,
       },
       home: _ready
-          ? ArchiveHome(
-              repository: _repository,
-              settings: _settings,
-              onSettingsChanged: _saveSettings,
-              onCheckForUpdates: _updateService.checkForUpdate,
-              onInstallUpdate: _updateService.downloadAndInstall,
+          ? _AtlasGrainFrame(
+              child: ArchiveHome(
+                repository: _repository,
+                settings: _settings,
+                onSettingsChanged: _saveSettings,
+                onCheckForUpdates: _updateService.checkForUpdate,
+                onInstallUpdate: _updateService.downloadAndInstall,
+              ),
             )
-          : const Scaffold(body: Center(child: Text('正在打开本地档案…'))),
+          : const _AtlasGrainFrame(
+              child: Scaffold(body: Center(child: Text('正在打开本地档案…'))),
+            ),
     );
   }
 }
@@ -307,71 +313,83 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
 ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
   final primary = Color(primaryColor.value);
   final companion = Color(primaryColor.companionValue);
+  final canvas = brightness == Brightness.dark ? Colors.black : Colors.white;
+  final surface = Color.alphaBlend(companion.withAlpha(30), canvas);
+  final surfaceLow = Color.alphaBlend(companion.withAlpha(46), canvas);
+  final surfaceHigh = Color.alphaBlend(companion.withAlpha(68), canvas);
+  final surfaceHighest = Color.alphaBlend(companion.withAlpha(92), canvas);
   final onPrimary = _onPaletteColor(primary);
   final onCompanion = _onPaletteColor(companion);
+  final onSurface = brightness == Brightness.dark ? Colors.white : Colors.black;
+  final error = brightness == Brightness.dark ? Colors.white : Colors.black;
   final scheme =
       (brightness == Brightness.dark ? ColorScheme.dark : ColorScheme.light)(
         primary: primary,
         onPrimary: onPrimary,
-        primaryContainer: companion,
-        onPrimaryContainer: onCompanion,
+        primaryContainer: surfaceHigh,
+        onPrimaryContainer: onSurface,
         secondary: companion,
         onSecondary: onCompanion,
-        secondaryContainer: primary,
+        secondaryContainer: surfaceHighest,
         onSecondaryContainer: onPrimary,
-        tertiary: primary,
-        onTertiary: onPrimary,
-        error: primary,
-        onError: onPrimary,
-        errorContainer: companion,
-        onErrorContainer: onCompanion,
-        surface: companion,
-        onSurface: onCompanion,
-        surfaceDim: companion,
-        surfaceBright: companion,
-        surfaceContainerLowest: companion,
-        surfaceContainerLow: companion,
-        surfaceContainer: companion,
-        surfaceContainerHigh: companion,
-        surfaceContainerHighest: companion,
-        onSurfaceVariant: onCompanion,
-        outline: primary,
-        outlineVariant: companion,
-        inverseSurface: primary,
+        tertiary: companion,
+        onTertiary: onCompanion,
+        error: error,
+        onError: brightness == Brightness.dark ? Colors.black : Colors.white,
+        errorContainer: error,
+        onErrorContainer: brightness == Brightness.dark
+            ? Colors.black
+            : Colors.white,
+        surface: surface,
+        onSurface: onSurface,
+        surfaceDim: canvas,
+        surfaceBright: surfaceLow,
+        surfaceContainerLowest: canvas,
+        surfaceContainerLow: surfaceLow,
+        surfaceContainer: surfaceHigh,
+        surfaceContainerHigh: surfaceHighest,
+        surfaceContainerHighest: Color.alphaBlend(
+          companion.withAlpha(116),
+          canvas,
+        ),
+        onSurfaceVariant: onSurface.withAlpha(170),
+        outline: onSurface.withAlpha(120),
+        outlineVariant: surfaceHigh,
+        inverseSurface: onSurface,
         onInverseSurface: onPrimary,
-        inversePrimary: companion,
+        inversePrimary: surfaceHigh,
         surfaceTint: Colors.transparent,
-        background: companion,
-        onBackground: onCompanion,
-        surfaceVariant: companion,
+        background: surface,
+        onBackground: onSurface,
+        surfaceVariant: surfaceLow,
       );
   return ThemeData(
     brightness: brightness,
     useMaterial3: true,
-    scaffoldBackgroundColor: companion,
+    scaffoldBackgroundColor: surface,
     colorScheme: scheme,
     cardTheme: CardThemeData(
-      color: companion,
+      color: surfaceLow,
       elevation: 0,
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: const BorderRadius.all(Radius.circular(16)),
-        side: BorderSide(color: primary),
+        side: BorderSide(color: scheme.outline),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: companion,
+      fillColor: surfaceLow,
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       border: OutlineInputBorder(
         borderRadius: const BorderRadius.all(Radius.circular(12)),
-        borderSide: BorderSide(color: primary),
+        borderSide: BorderSide(color: scheme.outline),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: const BorderRadius.all(Radius.circular(12)),
-        borderSide: BorderSide(color: primary),
+        borderSide: BorderSide(color: scheme.outline),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: const BorderRadius.all(Radius.circular(12)),
@@ -379,36 +397,36 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
       ),
     ),
     navigationRailTheme: NavigationRailThemeData(
-      backgroundColor: primary,
-      selectedIconTheme: IconThemeData(color: onCompanion),
+      backgroundColor: surface,
+      selectedIconTheme: IconThemeData(color: onSurface),
       selectedLabelTextStyle: TextStyle(
-        color: onCompanion,
+        color: onSurface,
         fontWeight: FontWeight.w700,
       ),
-      indicatorColor: companion,
+      indicatorColor: surfaceHigh,
       indicatorShape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(16)),
       ),
       useIndicator: true,
-      unselectedIconTheme: IconThemeData(color: onPrimary),
-      unselectedLabelTextStyle: TextStyle(color: onPrimary),
+      unselectedIconTheme: IconThemeData(color: onSurface.withAlpha(170)),
+      unselectedLabelTextStyle: TextStyle(color: onSurface.withAlpha(170)),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: primary,
+      backgroundColor: surface,
       surfaceTintColor: Colors.transparent,
-      indicatorColor: companion,
+      indicatorColor: surfaceHigh,
       indicatorShape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(16)),
       ),
       overlayColor: const WidgetStatePropertyAll<Color?>(Colors.transparent),
     ),
     chipTheme: ChipThemeData(
-      backgroundColor: primary,
+      backgroundColor: surfaceLow,
       side: BorderSide.none,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(8)),
       ),
-      labelStyle: TextStyle(color: onPrimary, fontSize: 11),
+      labelStyle: TextStyle(color: onSurface, fontSize: 11),
       padding: const EdgeInsets.symmetric(horizontal: 4),
     ),
     listTileTheme: const ListTileThemeData(
@@ -428,30 +446,30 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: primary,
-        side: BorderSide(color: primary),
+        foregroundColor: onSurface,
+        side: BorderSide(color: scheme.outline),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
         ),
       ),
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: companion,
+      backgroundColor: surfaceLow,
       surfaceTintColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(20)),
       ),
     ),
     popupMenuTheme: PopupMenuThemeData(
-      color: companion,
-      textStyle: TextStyle(color: onCompanion),
+      color: surfaceLow,
+      textStyle: TextStyle(color: onSurface),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(14)),
       ),
     ),
     snackBarTheme: SnackBarThemeData(
-      backgroundColor: primary,
-      contentTextStyle: TextStyle(color: onPrimary),
+      backgroundColor: surfaceHigh,
+      contentTextStyle: TextStyle(color: onSurface),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(12)),
       ),
@@ -464,8 +482,68 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
     textTheme:
         (brightness == Brightness.dark ? ThemeData.dark() : ThemeData.light())
             .textTheme
-            .apply(bodyColor: onCompanion, displayColor: onCompanion),
+            .apply(bodyColor: onSurface, displayColor: onSurface),
   );
+}
+
+class _AtlasGrainFrame extends StatelessWidget {
+  const _AtlasGrainFrame({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final grainColor =
+        (brightness == Brightness.dark ? Colors.white : Colors.black).withAlpha(
+          10,
+        );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              key: const ValueKey('atlas-grain'),
+              painter: _AtlasGrainPainter(grainColor),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AtlasGrainPainter extends CustomPainter {
+  const _AtlasGrainPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    const cellSize = 22.0;
+    final columns = (size.width / cellSize).ceil();
+    final rows = (size.height / cellSize).ceil();
+    final paint = Paint()..color = color;
+    // ponytail: fixed grid keeps painting cheap; use a texture asset only if this repeats visibly.
+    for (var row = 0; row < rows; row++) {
+      for (var column = 0; column < columns; column++) {
+        final index = row * columns + column;
+        final x = column * cellSize + (index * 17) % 19 + 1;
+        final y = row * cellSize + (index * 29) % 19 + 1;
+        canvas.drawRect(
+          Rect.fromLTWH(x, y, index.isEven ? 1.0 : 0.7, 1.0),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AtlasGrainPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 enum ArchiveView { timeline, people, tags, settings }
@@ -1501,13 +1579,13 @@ class _Brand extends StatelessWidget {
             Text(
               'Thing',
               style: TextStyle(
-                color: colors.onPrimary,
+                color: colors.onSurface,
                 fontWeight: FontWeight.w700,
               ),
             ),
             Text(
               'THING · ARCHIVE',
-              style: TextStyle(color: colors.onPrimary, fontSize: 9),
+              style: TextStyle(color: colors.onSurfaceVariant, fontSize: 9),
             ),
           ],
         ),
@@ -1528,7 +1606,7 @@ class _DesktopSidebar extends StatelessWidget {
     return SizedBox(
       width: 264,
       child: ColoredBox(
-        color: colors.primary,
+        color: colors.surface,
         child: Column(
           children: [
             Expanded(
@@ -1573,14 +1651,14 @@ class _DesktopSidebar extends StatelessWidget {
                     onPressed: () => onChanged(ArchiveView.settings),
                   ),
                   const SizedBox(height: 12),
-                  Divider(color: colors.secondary),
+                  Divider(color: colors.outlineVariant),
                   const SizedBox(height: 14),
                   Text(
                     '你的资料只保存在此设备。\n设置页可管理备份与偏好。',
                     style: TextStyle(
                       fontSize: 12,
                       height: 1.6,
-                      color: colors.onPrimary,
+                      color: colors.onSurface,
                     ),
                   ),
                 ],
@@ -1605,7 +1683,7 @@ class _SidebarSettingsButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final selectedColor = colors.secondary;
+    final selectedColor = colors.surfaceContainerHigh;
     return Material(
       color: selected ? selectedColor : Colors.transparent,
       borderRadius: const BorderRadius.all(Radius.circular(12)),
@@ -1622,13 +1700,15 @@ class _SidebarSettingsButton extends StatelessWidget {
               children: [
                 Icon(
                   selected ? Icons.settings : Icons.settings_outlined,
-                  color: selected ? colors.onSecondary : colors.onPrimary,
+                  color: selected ? colors.onSurface : colors.onSurfaceVariant,
                 ),
                 const SizedBox(width: 12),
                 Text(
                   '设置',
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: selected ? colors.onSecondary : colors.onPrimary,
+                    color: selected
+                        ? colors.onSurface
+                        : colors.onSurfaceVariant,
                     fontWeight: selected ? FontWeight.w700 : null,
                   ),
                 ),
@@ -1656,7 +1736,7 @@ class _Header extends StatelessWidget {
               Text(
                 'THING · ARCHIVE',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.primary,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.4,
                 ),
@@ -1805,11 +1885,11 @@ class FilterBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: value == null
             ? Theme.of(context).colorScheme.surface
-            : Theme.of(context).colorScheme.primary,
+            : Theme.of(context).colorScheme.surfaceContainerHigh,
         border: Border.all(
           color: value == null
               ? Theme.of(context).colorScheme.outline
-              : Theme.of(context).colorScheme.primary,
+              : Theme.of(context).colorScheme.outline,
         ),
         borderRadius: const BorderRadius.all(Radius.circular(12)),
       ),
@@ -3334,8 +3414,10 @@ class SettingsPage extends StatelessWidget {
                     ),
                   ),
                 ),
-                selectedColor: Theme.of(context).colorScheme.primary,
-                checkmarkColor: Theme.of(context).colorScheme.primary,
+                selectedColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHigh,
+                checkmarkColor: Theme.of(context).colorScheme.onSurface,
                 selected: settings.primaryColor == color,
                 onSelected: (_) =>
                     _change(settings.copyWith(primaryColor: color)),
@@ -4619,8 +4701,8 @@ class _EventEditorState extends State<EventEditor> {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
         decoration: BoxDecoration(
-          color: colors.primary,
-          border: Border.all(color: colors.primary),
+          color: colors.surfaceContainerHigh,
+          border: Border.all(color: colors.outline),
           borderRadius: const BorderRadius.all(Radius.circular(10)),
         ),
         child: Row(
