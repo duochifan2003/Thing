@@ -663,7 +663,8 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     final directory = widget.settings.syncDirectory;
     if (!widget.settings.syncEnabled ||
         directory == null ||
-        directory.isEmpty) {
+        directory.isEmpty ||
+        (Platform.isMacOS && widget.settings.syncDirectoryBookmark == null)) {
       return;
     }
     if (_syncBusy) return;
@@ -3197,7 +3198,11 @@ class SettingsPage extends StatelessWidget {
                 label: Text(directory == null ? '选择同步目录' : '更换目录'),
               ),
               FilledButton.icon(
-                onPressed: settings.syncEnabled && directory != null
+                onPressed:
+                    settings.syncEnabled &&
+                        directory != null &&
+                        (!Platform.isMacOS ||
+                            settings.syncDirectoryBookmark != null)
                     ? syncNow
                     : null,
                 icon: const Icon(Icons.sync),
