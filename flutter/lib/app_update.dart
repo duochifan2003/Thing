@@ -6,9 +6,9 @@ import 'package:path/path.dart' as path;
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.17',
+  defaultValue: '0.1.18',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '40');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '41');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -251,7 +251,7 @@ class AppUpdateService {
       throw const AppUpdateException('无法确定 macOS 应用安装位置。');
     }
     final targetApp = executable.substring(0, markerIndex);
-    final script = io.File(path.join(temporary.path, 'install-update.command'));
+    final script = io.File(path.join(temporary.path, 'install-update.sh'));
     final log = io.File(path.join(temporary.path, 'install-update.log'));
     await script.writeAsString('''#!/bin/zsh
 set -u
@@ -331,9 +331,12 @@ log "更新完成"
     if (chmod.exitCode != 0) {
       throw const AppUpdateException('无法准备 macOS 更新安装器。');
     }
-    final open = await io.Process.run('/usr/bin/open', [script.path]);
-    if (open.exitCode != 0) {
-      throw AppUpdateException('无法启动 macOS 更新安装器：${open.stderr}'.trim());
+    try {
+      await io.Process.start('/bin/zsh', [
+        script.path,
+      ], mode: io.ProcessStartMode.detached);
+    } on io.ProcessException catch (error) {
+      throw AppUpdateException('无法启动 macOS 更新安装器：${error.message}');
     }
   }
 
