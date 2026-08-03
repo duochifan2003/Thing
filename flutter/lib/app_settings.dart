@@ -4,13 +4,7 @@ import 'archive.dart';
 
 enum AppThemeMode { system, light, dark }
 
-enum AppPrimaryColor {
-  berryRedOat,
-  mintGreenCharcoal,
-  royalBlueYellow,
-  brightOrangeDarkTeal,
-  creamWhiteLeafGreen,
-}
+enum AppPrimaryColor { berryRedOat, royalBlueYellow }
 
 enum TrashRetention {
   immediate,
@@ -32,26 +26,17 @@ extension AppThemeModeLabel on AppThemeMode {
 extension AppPrimaryColorLabel on AppPrimaryColor {
   String get label => switch (this) {
     AppPrimaryColor.berryRedOat => '莓红 · 燕麦色',
-    AppPrimaryColor.mintGreenCharcoal => '薄荷绿 · 炭灰色',
     AppPrimaryColor.royalBlueYellow => '宝蓝 · 明黄',
-    AppPrimaryColor.brightOrangeDarkTeal => '亮橙 · 深青色',
-    AppPrimaryColor.creamWhiteLeafGreen => '奶油白 · 草木绿',
   };
 
   int get value => switch (this) {
     AppPrimaryColor.berryRedOat => 0xffb50031,
-    AppPrimaryColor.mintGreenCharcoal => 0xff7dffde,
     AppPrimaryColor.royalBlueYellow => 0xff012bac,
-    AppPrimaryColor.brightOrangeDarkTeal => 0xffff7400,
-    AppPrimaryColor.creamWhiteLeafGreen => 0xfff6f9e4,
   };
 
   int get companionValue => switch (this) {
     AppPrimaryColor.berryRedOat => 0xffdac9b1,
-    AppPrimaryColor.mintGreenCharcoal => 0xff2f2f2f,
     AppPrimaryColor.royalBlueYellow => 0xffffcf00,
-    AppPrimaryColor.brightOrangeDarkTeal => 0xff253636,
-    AppPrimaryColor.creamWhiteLeafGreen => 0xff67b972,
   };
 }
 
@@ -78,7 +63,7 @@ extension TrashRetentionLabel on TrashRetention {
 class AppSettings {
   const AppSettings({
     this.themeMode = AppThemeMode.system,
-    this.primaryColor = AppPrimaryColor.mintGreenCharcoal,
+    this.primaryColor = AppPrimaryColor.berryRedOat,
     this.defaultPrecision = Precision.day,
     this.syncEnabled = false,
     this.syncDirectory,
@@ -174,15 +159,15 @@ AppThemeMode _themeMode(Object? value) => switch (value) {
 };
 
 AppPrimaryColor _primaryColor(Object? value) => switch (value) {
-  'terracotta' => AppPrimaryColor.brightOrangeDarkTeal,
+  'terracotta' => AppPrimaryColor.berryRedOat,
   'oceanBlue' => AppPrimaryColor.royalBlueYellow,
   'berryRedOat' => AppPrimaryColor.berryRedOat,
-  'mintGreenCharcoal' => AppPrimaryColor.mintGreenCharcoal,
   'royalBlueYellow' => AppPrimaryColor.royalBlueYellow,
-  'brightOrangeDarkTeal' => AppPrimaryColor.brightOrangeDarkTeal,
-  'creamWhiteLeafGreen' => AppPrimaryColor.creamWhiteLeafGreen,
-  'forestGreen' => AppPrimaryColor.mintGreenCharcoal,
-  _ => AppPrimaryColor.mintGreenCharcoal,
+  'forestGreen' => AppPrimaryColor.berryRedOat,
+  'mintGreenCharcoal' => AppPrimaryColor.berryRedOat,
+  'brightOrangeDarkTeal' => AppPrimaryColor.berryRedOat,
+  'creamWhiteLeafGreen' => AppPrimaryColor.berryRedOat,
+  _ => AppPrimaryColor.berryRedOat,
 };
 
 Precision _precision(Object? value) => switch (value) {
