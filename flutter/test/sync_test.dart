@@ -46,6 +46,53 @@ void main() {
     );
   });
 
+  test('preserves event image data through sync serialization and merge', () {
+    final baseEvent = _event('e-1', const []);
+    final base = _eventEnvelope(baseEvent, 'base', DateTime.utc(2025, 1, 1));
+    final local = SyncEnvelope(
+      archive: base.archive.copyWith(
+        events: [
+          baseEvent.copyWith(images: const ['bG9jYWw=']),
+        ],
+      ),
+      trash: const [],
+      tombstones: const [],
+      retentionDays: 30,
+      writtenAt: DateTime.utc(2025, 1, 2),
+      deviceId: 'local',
+    );
+    final remote = SyncEnvelope(
+      archive: base.archive.copyWith(
+        events: [
+          baseEvent.copyWith(images: const ['cmVtb3Rl']),
+        ],
+      ),
+      trash: const [],
+      tombstones: const [],
+      retentionDays: 30,
+      writtenAt: DateTime.utc(2025, 1, 3),
+      deviceId: 'remote',
+    );
+
+    final decoded = SyncEnvelope.decode(local.encode());
+    expect(decoded.archive.events.single.images, ['bG9jYWw=']);
+
+    final conflict = SyncMerger.merge(
+      local: local,
+      remote: remote,
+      baseline: base,
+    );
+    expect(conflict.conflicts.single.key, 'event:e-1');
+
+    final resolved = SyncMerger.merge(
+      local: local,
+      remote: remote,
+      baseline: base,
+      resolutions: const {'event:e-1': SyncConflictChoice.remote},
+    );
+    expect(resolved.envelope.archive.events.single.images, ['cmVtb3Rl']);
+  });
+
   test('merges one-sided changes and exposes simultaneous edits', () {
     final base = _envelope(_person('p-1'), 'base', DateTime.utc(2025, 1, 1));
     final local = SyncEnvelope(
@@ -274,6 +321,34 @@ SyncEnvelope _envelope(Person person, String deviceId, DateTime writtenAt) =>
       writtenAt: writtenAt,
       deviceId: deviceId,
     );
+
+SyncEnvelope _eventEnvelope(
+  EventItem event,
+  String deviceId,
+  DateTime writtenAt,
+) => SyncEnvelope(
+  archive: Archive(people: [_person('p-1')], events: [event]),
+  trash: const [],
+  tombstones: const [],
+  retentionDays: 30,
+  writtenAt: writtenAt,
+  deviceId: deviceId,
+);
+
+EventItem _event(String id, List<String> images) => EventItem(
+  id: id,
+  title: '事件',
+  precision: Precision.day,
+  start: '2025-01-01',
+  place: '',
+  description: '',
+  tags: const [],
+  sources: const [],
+  people: const [PersonLink(personId: 'p-1', role: Role.organizer)],
+  createdAt: DateTime.utc(2025),
+  updatedAt: DateTime.utc(2025),
+  images: images,
+);
 
 Person _person(String id) => Person(
   id: id,

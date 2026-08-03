@@ -16,62 +16,64 @@ import 'event_location.dart';
 import 'sync_models.dart';
 import 'sync_service.dart';
 
-abstract final class AtlasPalette {
-  static const paper = Color(0xfff7f7f1);
-  static const sidebar = Color(0xfff0f3ec);
-  static const card = Color(0xfffffefa);
-  static const ink = Color(0xff17211d);
-  static const muted = Color(0xff758078);
-  static const line = Color(0xffdfe5df);
-  static const green = Color(0xff185c45);
-  static const sage = Color(0xffdce7d6);
-  static const navigationSelected = Color(0xffc5dbc0);
-  static const interactiveHover = Color(0x1f185c45);
-  static const interactiveSplash = Color(0x33185c45);
-  static const accent = Color(0xffdd704c);
-  static const personSurface = Color(0xffe8ebff);
-  static const personOnSurface = Color(0xff45558f);
-  static const personTagSurface = Color(0xfff1e5f5);
-  static const personTagOnSurface = Color(0xff754c83);
-  static const eventTagSurface = Color(0xffe7ebef);
-  static const eventTagOnSurface = Color(0xff52606d);
+const _atlasMotionDuration = Duration(milliseconds: 280);
+const _atlasMotionCurve = Cubic(0.22, 1, 0.36, 1);
+const _atlasMotionReverseCurve = Cubic(0.64, 0, 0.78, 0);
+
+Color _contrastText(Color background) =>
+    _contrastRatio(background, Colors.black) >=
+        _contrastRatio(background, Colors.white)
+    ? Colors.black
+    : Colors.white;
+
+double _contrastRatio(Color foreground, Color background) {
+  final lighter = math.max(
+    foreground.computeLuminance(),
+    background.computeLuminance(),
+  );
+  final darker = math.min(
+    foreground.computeLuminance(),
+    background.computeLuminance(),
+  );
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
-bool _isDark(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark;
-
 Color _personSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff3d4673) : AtlasPalette.personSurface;
+    Theme.of(context).colorScheme.primary.withAlpha(0x26);
 
 Color _personOnSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xffdfe3ff) : AtlasPalette.personOnSurface;
+    Theme.of(context).colorScheme.onSurface;
 
 Color _personTagSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff4f3a57) : AtlasPalette.personTagSurface;
+    Theme.of(context).colorScheme.primary.withAlpha(0x18);
 
-Color _personTagOnSurface(BuildContext context) => _isDark(context)
-    ? const Color(0xffefd8f5)
-    : AtlasPalette.personTagOnSurface;
+Color _personTagOnSurface(BuildContext context) =>
+    Theme.of(context).colorScheme.onSurface;
 
 Color _eventTagSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff3a4048) : AtlasPalette.eventTagSurface;
+    Theme.of(context).colorScheme.primary.withAlpha(0x12);
 
 Color _eventTagOnSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xffd8dee6) : AtlasPalette.eventTagOnSurface;
+    Theme.of(context).colorScheme.onSurface;
 
-Color _eventStatusColor(EventStatus status) => switch (status) {
-  EventStatus.scheduled => const Color(0xffffedd2),
-  EventStatus.active => const Color(0xffdcecff),
-  EventStatus.completed => const Color(0xffdfe5ec),
-  EventStatus.cancelled => const Color(0xffffdfe3),
-};
+Color _eventStatusColor(BuildContext context, EventStatus status) {
+  final colors = Theme.of(context).colorScheme;
+  return switch (status) {
+    EventStatus.scheduled => colors.primary.withAlpha(0x26),
+    EventStatus.active => colors.primary.withAlpha(0x3d),
+    EventStatus.completed => colors.onSurface.withAlpha(0x18),
+    EventStatus.cancelled => colors.error.withAlpha(0x26),
+  };
+}
 
-Color _eventStatusTextColor(EventStatus status) => switch (status) {
-  EventStatus.scheduled => const Color(0xffa45a10),
-  EventStatus.active => const Color(0xff245b91),
-  EventStatus.completed => const Color(0xff4b5e70),
-  EventStatus.cancelled => const Color(0xffa63e4c),
-};
+Color _eventStatusTextColor(BuildContext context, EventStatus status) {
+  final colors = Theme.of(context).colorScheme;
+  return switch (status) {
+    EventStatus.scheduled || EventStatus.active => colors.primary,
+    EventStatus.completed => colors.onSurfaceVariant,
+    EventStatus.cancelled => colors.error,
+  };
+}
 
 String _formatLocalDate(DateTime date) =>
     '${date.year.toString().padLeft(4, '0')}-'
@@ -89,14 +91,54 @@ DateTime? _parseLocalDate(String value) {
 }
 
 Widget _detailTransition(Widget child, Animation<double> animation) {
-  final slide = Tween<Offset>(
-    begin: const Offset(0.06, 0),
-    end: Offset.zero,
-  ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+  final slide =
+      Tween<Offset>(
+        begin: const Offset(0.035, 0.015),
+        end: Offset.zero,
+      ).animate(
+        CurvedAnimation(
+          parent: animation,
+          curve: _atlasMotionCurve,
+          reverseCurve: _atlasMotionReverseCurve,
+        ),
+      );
   return FadeTransition(
-    opacity: animation,
+    opacity: CurvedAnimation(
+      parent: animation,
+      curve: _atlasMotionCurve,
+      reverseCurve: _atlasMotionReverseCurve,
+    ),
     child: SlideTransition(position: slide, child: child),
   );
+}
+
+class _AtlasPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _AtlasPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: _atlasMotionCurve,
+      reverseCurve: _atlasMotionReverseCurve,
+    );
+    return FadeTransition(
+      opacity: curved,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0.035, 0.015),
+          end: Offset.zero,
+        ).animate(curved),
+        child: child,
+      ),
+    );
+  }
 }
 
 class _EditorDialog extends StatelessWidget {
@@ -265,8 +307,16 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
       ],
       supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
       locale: const Locale('zh', 'CN'),
-      theme: _atlasTheme(_settings.primaryColor, Brightness.light),
-      darkTheme: _atlasTheme(_settings.primaryColor, Brightness.dark),
+      theme: _atlasTheme(
+        _settings.primaryColor,
+        _settings.colorShadows,
+        Brightness.light,
+      ),
+      darkTheme: _atlasTheme(
+        _settings.primaryColor,
+        _settings.colorShadows,
+        Brightness.dark,
+      ),
       themeMode: switch (_settings.themeMode) {
         AppThemeMode.system => ThemeMode.system,
         AppThemeMode.light => ThemeMode.light,
@@ -285,42 +335,52 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
   }
 }
 
-ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
+ThemeData _atlasTheme(
+  AppPrimaryColor primaryColor,
+  bool colorShadows,
+  Brightness brightness,
+) {
   final dark = brightness == Brightness.dark;
-  final paper = dark ? const Color(0xff0f1012) : AtlasPalette.paper;
-  final sidebar = dark ? const Color(0xff17191c) : AtlasPalette.sidebar;
-  final card = dark ? const Color(0xff222529) : AtlasPalette.card;
-  final ink = dark ? const Color(0xfff2f2f3) : AtlasPalette.ink;
-  final muted = dark ? const Color(0xffa6a9ae) : AtlasPalette.muted;
-  final line = dark ? const Color(0xff3b3e43) : AtlasPalette.line;
-  final primary = dark
-      ? switch (primaryColor) {
-          AppPrimaryColor.forestGreen => const Color(0xff55c596),
-          AppPrimaryColor.terracotta => const Color(0xffff9a7b),
-          AppPrimaryColor.oceanBlue => const Color(0xff79b8e6),
-        }
-      : Color(primaryColor.value);
-  final onPrimary = dark ? const Color(0xff07140d) : Colors.white;
+  final primary = Color(primaryColor.value);
+  final companion = Color(primaryColor.companionValue);
+  final paper = dark ? const Color(0xff0b0b0b) : companion;
+  final sidebar = dark ? const Color(0xff111111) : companion;
+  final card = dark ? const Color(0xff171717) : companion;
+  final ink = dark ? Colors.white : _contrastText(companion);
+  final muted = Color.lerp(ink, card, 0.34)!;
+  final line = Color.lerp(primary, ink, 0.22)!;
+  final onPrimary = _contrastText(primary);
+  final error = dark ? const Color(0xffff6b81) : const Color(0xffb50031);
+  final onError = _contrastText(error);
+  final shadow = colorShadows ? primary.withAlpha(0x99) : Colors.transparent;
   final scheme = (dark ? ColorScheme.dark : ColorScheme.light)(
     primary: primary,
-    secondary: AtlasPalette.accent,
+    onPrimary: onPrimary,
+    secondary: primary,
+    onSecondary: onPrimary,
+    error: error,
+    onError: onError,
     surface: card,
     onSurface: ink,
+    onSurfaceVariant: muted,
     outline: line,
   );
   return ThemeData(
     brightness: brightness,
     useMaterial3: true,
     scaffoldBackgroundColor: paper,
+    shadowColor: shadow,
     colorScheme: scheme,
     cardTheme: CardThemeData(
       color: card,
-      elevation: 0,
+      elevation: colorShadows ? 3 : 0,
+      shadowColor: shadow,
+      surfaceTintColor: Colors.transparent,
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: const BorderRadius.all(Radius.circular(16)),
-        side: BorderSide(color: line),
+        side: BorderSide(color: line, width: 1.2),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -365,15 +425,12 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
       overlayColor: WidgetStatePropertyAll<Color?>(primary.withAlpha(0x1f)),
     ),
     chipTheme: ChipThemeData(
-      backgroundColor: dark ? const Color(0xff2c2f34) : const Color(0xffedf3ea),
-      side: BorderSide.none,
+      backgroundColor: primary.withAlpha(dark ? 0x36 : 0x1f),
+      side: BorderSide(color: line),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(8)),
       ),
-      labelStyle: TextStyle(
-        color: dark ? ink : const Color(0xff41614f),
-        fontSize: 11,
-      ),
+      labelStyle: TextStyle(color: ink, fontSize: 11),
       padding: const EdgeInsets.symmetric(horizontal: 4),
     ),
     listTileTheme: const ListTileThemeData(
@@ -385,6 +442,8 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
       style: FilledButton.styleFrom(
         backgroundColor: primary,
         foregroundColor: onPrimary,
+        elevation: colorShadows ? 2 : 0,
+        shadowColor: shadow,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
         ),
@@ -401,6 +460,8 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
       ),
     ),
     dialogTheme: DialogThemeData(
+      elevation: colorShadows ? 8 : 0,
+      shadowColor: shadow,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(20)),
       ),
@@ -415,7 +476,13 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
         borderRadius: BorderRadius.all(Radius.circular(12)),
       ),
     ),
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
+      backgroundColor: primary,
+      foregroundColor: onPrimary,
+      elevation: colorShadows ? 4 : 0,
+      focusElevation: colorShadows ? 5 : 0,
+      hoverElevation: colorShadows ? 5 : 0,
+      highlightElevation: colorShadows ? 3 : 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(16)),
       ),
@@ -423,6 +490,16 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
     textTheme: (dark ? ThemeData.dark() : ThemeData.light()).textTheme.apply(
       bodyColor: ink,
       displayColor: ink,
+    ),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: _AtlasPageTransitionsBuilder(),
+        TargetPlatform.fuchsia: _AtlasPageTransitionsBuilder(),
+        TargetPlatform.iOS: _AtlasPageTransitionsBuilder(),
+        TargetPlatform.linux: _AtlasPageTransitionsBuilder(),
+        TargetPlatform.macOS: _AtlasPageTransitionsBuilder(),
+        TargetPlatform.windows: _AtlasPageTransitionsBuilder(),
+      },
     ),
   );
 }
@@ -1099,14 +1176,25 @@ class _ArchiveHomeState extends State<ArchiveHome> {
               child: desktop
                   ? Row(
                       children: [
-                        Expanded(child: list),
+                        Expanded(
+                          child: AnimatedSwitcher(
+                            duration: _atlasMotionDuration,
+                            reverseDuration: _atlasMotionDuration,
+                            transitionBuilder: _detailTransition,
+                            child: KeyedSubtree(
+                              key: ValueKey('list-${_view.name}'),
+                              child: list,
+                            ),
+                          ),
+                        ),
                         AnimatedSize(
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
+                          duration: _atlasMotionDuration,
+                          curve: _atlasMotionCurve,
                           alignment: Alignment.centerRight,
                           child: selected != null && !utilityView
                               ? AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 220),
+                                  duration: _atlasMotionDuration,
+                                  reverseDuration: _atlasMotionDuration,
                                   transitionBuilder: _detailTransition,
                                   child: SizedBox(
                                     key: ValueKey(
@@ -1135,7 +1223,8 @@ class _ArchiveHomeState extends State<ArchiveHome> {
                       ],
                     )
                   : AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 220),
+                      duration: _atlasMotionDuration,
+                      reverseDuration: _atlasMotionDuration,
                       transitionBuilder: _detailTransition,
                       child: selected != null && !utilityView
                           ? KeyedSubtree(
@@ -1876,8 +1965,8 @@ class TimelineList extends StatelessWidget {
                       child: Container(
                         width: 10,
                         height: 10,
-                        decoration: const BoxDecoration(
-                          color: AtlasPalette.accent,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.primary,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -1945,6 +2034,7 @@ class TimelineList extends StatelessWidget {
                                   children: [
                                     Chip(
                                       backgroundColor: _eventStatusColor(
+                                        context,
                                         event.status,
                                       ),
                                       label: Text(
@@ -1952,11 +2042,23 @@ class TimelineList extends StatelessWidget {
                                         style: TextStyle(
                                           fontSize: 11,
                                           color: _eventStatusTextColor(
+                                            context,
                                             event.status,
                                           ),
                                         ),
                                       ),
                                     ),
+                                    if (event.images.isNotEmpty)
+                                      Chip(
+                                        avatar: const Icon(
+                                          Icons.photo_library_outlined,
+                                          size: 15,
+                                        ),
+                                        label: Text(
+                                          '${event.images.length} 张图片',
+                                          style: const TextStyle(fontSize: 11),
+                                        ),
+                                      ),
                                     ...event.tags.map(
                                       (tag) => Chip(
                                         backgroundColor: _eventTagSurface(
@@ -2352,13 +2454,21 @@ class ArchiveDetail extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(person?.bio ?? event!.description),
               ),
+            if (event?.images.isNotEmpty == true) ...[
+              const SizedBox(height: 20),
+              Text('图片', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              _ImageGallery(images: event!.images),
+            ],
             const SizedBox(height: 24),
             if (event != null) ...[
               Chip(
-                backgroundColor: _eventStatusColor(event!.status),
+                backgroundColor: _eventStatusColor(context, event!.status),
                 label: Text(
                   event!.status.label,
-                  style: TextStyle(color: _eventStatusTextColor(event!.status)),
+                  style: TextStyle(
+                    color: _eventStatusTextColor(context, event!.status),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -2526,6 +2636,246 @@ class DetailSection extends StatelessWidget {
             ),
           ),
     ],
+  );
+}
+
+Uint8List? _decodeImage(String value) {
+  try {
+    return base64Decode(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+class _ImageGallery extends StatelessWidget {
+  const _ImageGallery({required this.images, this.onRemove});
+
+  final List<String> images;
+  final ValueChanged<int>? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    if (images.isEmpty) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
+          borderRadius: const BorderRadius.all(Radius.circular(10)),
+        ),
+        child: SizedBox(
+          height: 112,
+          child: Center(
+            child: Text(
+              '还没有添加图片',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 720
+            ? 4
+            : constraints.maxWidth >= 420
+            ? 3
+            : 2;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: images.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            childAspectRatio: 1.15,
+          ),
+          itemBuilder: (context, index) {
+            final bytes = _decodeImage(images[index]);
+            return ClipRRect(
+              borderRadius: const BorderRadius.all(Radius.circular(10)),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Material(
+                    color: Theme.of(context).colorScheme.surface,
+                    child: InkWell(
+                      mouseCursor: bytes == null
+                          ? SystemMouseCursors.basic
+                          : SystemMouseCursors.click,
+                      onTap: bytes == null
+                          ? null
+                          : () => _showImageViewer(context, images, index),
+                      child: bytes == null
+                          ? Center(
+                              child: Text(
+                                '图片损坏',
+                                style: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            )
+                          : Image.memory(
+                              bytes,
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                              errorBuilder: (_, _, _) => Center(
+                                child: Text(
+                                  '图片损坏',
+                                  style: TextStyle(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                  ),
+                  if (onRemove != null)
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          color: Color(0xaa000000),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          tooltip: '移除图片',
+                          onPressed: () => onRemove!(index),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 32,
+                            height: 32,
+                          ),
+                          iconSize: 17,
+                          color: Colors.white,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+Future<void> _showImageViewer(
+  BuildContext context,
+  List<String> images,
+  int initialIndex,
+) async {
+  await showDialog<void>(
+    context: context,
+    barrierColor: Colors.black.withAlpha(0xe8),
+    builder: (_) => _ImageViewer(images: images, initialIndex: initialIndex),
+  );
+}
+
+class _ImageViewer extends StatefulWidget {
+  const _ImageViewer({required this.images, required this.initialIndex});
+
+  final List<String> images;
+  final int initialIndex;
+
+  @override
+  State<_ImageViewer> createState() => _ImageViewerState();
+}
+
+class _ImageViewerState extends State<_ImageViewer> {
+  late final PageController _controller = PageController(
+    initialPage: widget.initialIndex,
+  );
+  late int _index = widget.initialIndex;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    backgroundColor: Colors.transparent,
+    elevation: 0,
+    insetPadding: EdgeInsets.zero,
+    child: SafeArea(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          PageView.builder(
+            controller: _controller,
+            itemCount: widget.images.length,
+            onPageChanged: (index) => setState(() => _index = index),
+            itemBuilder: (context, index) {
+              final bytes = _decodeImage(widget.images[index]);
+              if (bytes == null) {
+                return const Center(
+                  child: Text('图片损坏', style: TextStyle(color: Colors.white)),
+                );
+              }
+              return Center(
+                child: InteractiveViewer(
+                  minScale: 1,
+                  maxScale: 4,
+                  child: Image.memory(
+                    bytes,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => const Text(
+                      '图片损坏',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          Positioned(
+            top: 8,
+            right: 8,
+            child: IconButton(
+              tooltip: '关闭图片',
+              onPressed: () => Navigator.pop(context),
+              color: Colors.white,
+              icon: const Icon(Icons.close),
+            ),
+          ),
+          if (widget.images.length > 1)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 16,
+              child: Center(
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    color: Color(0xaa000000),
+                    borderRadius: BorderRadius.all(Radius.circular(20)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    child: Text(
+                      '${_index + 1} / ${widget.images.length}',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
   );
 }
 
@@ -2915,28 +3265,54 @@ class SettingsPage extends StatelessWidget {
     final colorSection = _settingsSection(
       context,
       title: '主色预设',
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: AppPrimaryColor.values
-            .map(
-              (color) => ChoiceChip(
-                key: ValueKey('primary-${color.name}'),
-                label: Text(color.label),
-                avatar: CircleAvatar(
-                  backgroundColor: Color(color.value),
-                  radius: 8,
-                ),
-                selectedColor: Theme.of(
-                  context,
-                ).colorScheme.primary.withAlpha(0x30),
-                checkmarkColor: Theme.of(context).colorScheme.primary,
-                selected: settings.primaryColor == color,
-                onSelected: (_) =>
-                    _change(settings.copyWith(primaryColor: color)),
-              ),
-            )
-            .toList(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: AppPrimaryColor.values
+                .map(
+                  (color) => ChoiceChip(
+                    key: ValueKey('primary-${color.name}'),
+                    label: Text(color.label),
+                    avatar: SizedBox(
+                      width: 22,
+                      height: 16,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ColoredBox(color: Color(color.value)),
+                          ),
+                          Expanded(
+                            child: ColoredBox(
+                              color: Color(color.companionValue),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    selectedColor: Theme.of(
+                      context,
+                    ).colorScheme.primary.withAlpha(0x30),
+                    checkmarkColor: Theme.of(context).colorScheme.primary,
+                    selected: settings.primaryColor == color,
+                    onSelected: (_) =>
+                        _change(settings.copyWith(primaryColor: color)),
+                  ),
+                )
+                .toList(),
+          ),
+          const SizedBox(height: 10),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('彩色阴影'),
+            subtitle: const Text('用当前主色为卡片、按钮和弹层添加硬朗的视觉层次。'),
+            value: settings.colorShadows,
+            onChanged: (enabled) =>
+                _change(settings.copyWith(colorShadows: enabled)),
+          ),
+        ],
       ),
     );
     final precisionSection = _settingsSection(
@@ -3881,6 +4257,7 @@ class _EventEditorState extends State<EventEditor> {
   late final _description = TextEditingController(
     text: widget.initial?.description,
   );
+  late final List<String> _images = widget.initial?.images.toList() ?? [];
   late final _tags = TextEditingController(
     text: widget.initial?.tags.join('，'),
   );
@@ -4073,6 +4450,17 @@ class _EventEditorState extends State<EventEditor> {
               labelText: '描述',
               hintText: '发生了什么',
             ),
+          ),
+          _sectionTitle('图片'),
+          _ImageGallery(
+            images: _images,
+            onRemove: (index) => setState(() => _images.removeAt(index)),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _pickImages,
+            icon: const Icon(Icons.add_photo_alternate_outlined),
+            label: const Text('添加图片'),
           ),
           _sectionTitle('关联'),
           Row(
@@ -4503,6 +4891,43 @@ class _EventEditorState extends State<EventEditor> {
     }
   }
 
+  Future<void> _pickImages() async {
+    try {
+      final files = await openFiles(
+        acceptedTypeGroups: const [
+          XTypeGroup(
+            label: '图片',
+            extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'],
+          ),
+        ],
+      );
+      if (files.isEmpty) return;
+      final added = <String>[];
+      var skipped = false;
+      for (final file in files) {
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty || bytes.length > 12 * 1024 * 1024) {
+          skipped = true;
+          continue;
+        }
+        added.add(base64Encode(bytes));
+      }
+      if (!mounted) return;
+      setState(() => _images.addAll(added));
+      if (skipped) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('空文件或超过 12 MB 的图片已跳过。')));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('无法读取图片文件。')));
+      }
+    }
+  }
+
   Future<void> _pickDate(TextEditingController controller) async {
     final now = DateTime.now();
     DateTime? initial;
@@ -4599,6 +5024,7 @@ class _EventEditorState extends State<EventEditor> {
         end: _status == EventStatus.scheduled ? null : end,
         place: location.value,
         description: _description.text.trim(),
+        images: _images,
         tags: _split(_tags.text),
         sources: widget.initial?.sources ?? const [],
         people: _links,

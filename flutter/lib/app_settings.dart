@@ -4,7 +4,7 @@ import 'archive.dart';
 
 enum AppThemeMode { system, light, dark }
 
-enum AppPrimaryColor { forestGreen, terracotta, oceanBlue }
+enum AppPrimaryColor { berryRed, mintGreen, royalBlue, brightOrange, leafGreen }
 
 enum TrashRetention {
   immediate,
@@ -25,15 +25,27 @@ extension AppThemeModeLabel on AppThemeMode {
 
 extension AppPrimaryColorLabel on AppPrimaryColor {
   String get label => switch (this) {
-    AppPrimaryColor.forestGreen => '森林绿',
-    AppPrimaryColor.terracotta => '陶土橙',
-    AppPrimaryColor.oceanBlue => '海蓝',
+    AppPrimaryColor.berryRed => '莓红 · 燕麦',
+    AppPrimaryColor.mintGreen => '薄荷 · 炭灰',
+    AppPrimaryColor.royalBlue => '宝蓝 · 明黄',
+    AppPrimaryColor.brightOrange => '亮橙 · 深青',
+    AppPrimaryColor.leafGreen => '草木 · 奶油',
   };
 
   int get value => switch (this) {
-    AppPrimaryColor.forestGreen => 0xff185c45,
-    AppPrimaryColor.terracotta => 0xffdd704c,
-    AppPrimaryColor.oceanBlue => 0xff2f6690,
+    AppPrimaryColor.berryRed => 0xffb50031,
+    AppPrimaryColor.mintGreen => 0xff7dffde,
+    AppPrimaryColor.royalBlue => 0xff012bac,
+    AppPrimaryColor.brightOrange => 0xffff7400,
+    AppPrimaryColor.leafGreen => 0xff67b972,
+  };
+
+  int get companionValue => switch (this) {
+    AppPrimaryColor.berryRed => 0xffdac9b1,
+    AppPrimaryColor.mintGreen => 0xff2f2f2f,
+    AppPrimaryColor.royalBlue => 0xffffcf00,
+    AppPrimaryColor.brightOrange => 0xff253636,
+    AppPrimaryColor.leafGreen => 0xfff6f9e4,
   };
 }
 
@@ -60,7 +72,8 @@ extension TrashRetentionLabel on TrashRetention {
 class AppSettings {
   const AppSettings({
     this.themeMode = AppThemeMode.system,
-    this.primaryColor = AppPrimaryColor.forestGreen,
+    this.primaryColor = AppPrimaryColor.berryRed,
+    this.colorShadows = true,
     this.defaultPrecision = Precision.day,
     this.syncEnabled = false,
     this.syncDirectory,
@@ -69,6 +82,7 @@ class AppSettings {
 
   final AppThemeMode themeMode;
   final AppPrimaryColor primaryColor;
+  final bool colorShadows;
   final Precision defaultPrecision;
   final bool syncEnabled;
   final String? syncDirectory;
@@ -79,6 +93,7 @@ class AppSettings {
   AppSettings copyWith({
     AppThemeMode? themeMode,
     AppPrimaryColor? primaryColor,
+    bool? colorShadows,
     Precision? defaultPrecision,
     bool? syncEnabled,
     String? syncDirectory,
@@ -87,6 +102,7 @@ class AppSettings {
   }) => AppSettings(
     themeMode: themeMode ?? this.themeMode,
     primaryColor: primaryColor ?? this.primaryColor,
+    colorShadows: colorShadows ?? this.colorShadows,
     defaultPrecision: defaultPrecision ?? this.defaultPrecision,
     syncEnabled: syncEnabled ?? this.syncEnabled,
     syncDirectory: clearSyncDirectory
@@ -98,6 +114,7 @@ class AppSettings {
   Map<String, dynamic> toJson() => {
     'themeMode': themeMode.name,
     'primaryColor': primaryColor.name,
+    'colorShadows': colorShadows,
     'defaultPrecision': defaultPrecision.name,
     'syncEnabled': syncEnabled,
     'syncDirectory': syncDirectory,
@@ -115,6 +132,7 @@ class AppSettings {
     return AppSettings(
       themeMode: _themeMode(json['themeMode']),
       primaryColor: _primaryColor(json['primaryColor']),
+      colorShadows: json['colorShadows'] != false,
       defaultPrecision: _precision(json['defaultPrecision']),
       syncEnabled: json['syncEnabled'] == true,
       syncDirectory:
@@ -143,9 +161,15 @@ AppThemeMode _themeMode(Object? value) => switch (value) {
 };
 
 AppPrimaryColor _primaryColor(Object? value) => switch (value) {
-  'terracotta' => AppPrimaryColor.terracotta,
-  'oceanBlue' => AppPrimaryColor.oceanBlue,
-  _ => AppPrimaryColor.forestGreen,
+  'berryRed' => AppPrimaryColor.berryRed,
+  'mintGreen' => AppPrimaryColor.mintGreen,
+  'royalBlue' => AppPrimaryColor.royalBlue,
+  'brightOrange' => AppPrimaryColor.brightOrange,
+  'leafGreen' => AppPrimaryColor.leafGreen,
+  'terracotta' => AppPrimaryColor.brightOrange,
+  'forestGreen' => AppPrimaryColor.leafGreen,
+  'oceanBlue' => AppPrimaryColor.royalBlue,
+  _ => AppPrimaryColor.berryRed,
 };
 
 Precision _precision(Object? value) => switch (value) {

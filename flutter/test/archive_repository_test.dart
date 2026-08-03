@@ -40,6 +40,24 @@ void main() {
     },
   );
 
+  test('stores and replaces event image data in SQLite', () async {
+    await repository.replace(
+      Archive(
+        people: [_person('p-1')],
+        events: [
+          _event('e-1', 'p-1').copyWith(images: const ['aW1hZ2UtYQ==']),
+        ],
+      ),
+    );
+    expect((await repository.load()).events.single.images, ['aW1hZ2UtYQ==']);
+
+    await repository.saveEvent(
+      _event('e-1', 'p-1').copyWith(images: const ['aW1hZ2UtYg==']),
+    );
+
+    expect((await repository.load()).events.single.images, ['aW1hZ2UtYg==']);
+  });
+
   test('starts a new database without sample archive data', () async {
     final loaded = await repository.load();
 
@@ -80,21 +98,35 @@ void main() {
     expect((await repository.loadSettings()).themeMode, AppThemeMode.system);
     expect(
       (await repository.loadSettings()).primaryColor,
-      AppPrimaryColor.forestGreen,
+      AppPrimaryColor.berryRed,
     );
+    expect((await repository.loadSettings()).colorShadows, isTrue);
     expect((await repository.loadSettings()).defaultPrecision, Precision.day);
 
     const settings = AppSettings(
       themeMode: AppThemeMode.dark,
-      primaryColor: AppPrimaryColor.oceanBlue,
+      primaryColor: AppPrimaryColor.royalBlue,
+      colorShadows: false,
       defaultPrecision: Precision.range,
     );
     await repository.saveSettings(settings);
 
     final loaded = await repository.loadSettings();
     expect(loaded.themeMode, AppThemeMode.dark);
-    expect(loaded.primaryColor, AppPrimaryColor.oceanBlue);
+    expect(loaded.primaryColor, AppPrimaryColor.royalBlue);
+    expect(loaded.colorShadows, isFalse);
     expect(loaded.defaultPrecision, Precision.range);
+  });
+
+  test('maps retired palette values to the remaining palettes', () {
+    expect(
+      AppSettings.fromJson({'primaryColor': 'oceanBlue'}).primaryColor,
+      AppPrimaryColor.royalBlue,
+    );
+    expect(
+      AppSettings.fromJson({'primaryColor': 'terracotta'}).primaryColor,
+      AppPrimaryColor.brightOrange,
+    );
   });
 
   test(
@@ -108,7 +140,7 @@ void main() {
       await first.saveSettings(
         const AppSettings(
           themeMode: AppThemeMode.light,
-          primaryColor: AppPrimaryColor.terracotta,
+          primaryColor: AppPrimaryColor.berryRed,
           defaultPrecision: Precision.month,
         ),
       );
@@ -136,7 +168,7 @@ void main() {
       expect((await damaged.loadSettings()).themeMode, AppThemeMode.system);
       expect(
         (await damaged.loadSettings()).primaryColor,
-        AppPrimaryColor.forestGreen,
+        AppPrimaryColor.berryRed,
       );
       expect((await damaged.loadSettings()).defaultPrecision, Precision.day);
     },
@@ -145,7 +177,7 @@ void main() {
   test('archive replacement preserves local settings', () async {
     const settings = AppSettings(
       themeMode: AppThemeMode.dark,
-      primaryColor: AppPrimaryColor.terracotta,
+      primaryColor: AppPrimaryColor.royalBlue,
       defaultPrecision: Precision.year,
     );
     await repository.saveSettings(settings);
@@ -160,7 +192,7 @@ void main() {
     expect(await repository.loadSettings(), isA<AppSettings>());
     final loaded = await repository.loadSettings();
     expect(loaded.themeMode, AppThemeMode.dark);
-    expect(loaded.primaryColor, AppPrimaryColor.terracotta);
+    expect(loaded.primaryColor, AppPrimaryColor.royalBlue);
     expect(loaded.defaultPrecision, Precision.year);
     expect((await repository.load()).customTags, ['档案标签']);
   });
@@ -580,6 +612,12 @@ void main() {
       final loaded = await migrated.load();
       expect(loaded.events.single.status, EventStatus.completed);
       expect(loaded.events.single.previousEventIds, isEmpty);
+      expect(loaded.events.single.images, isEmpty);
+
+      await migrated.saveEvent(
+        loaded.events.single.copyWith(images: const ['b2xkLWltYWdl']),
+      );
+      expect((await migrated.load()).events.single.images, ['b2xkLWltYWdl']);
     },
   );
 }

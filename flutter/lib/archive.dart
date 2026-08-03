@@ -146,6 +146,7 @@ class EventItem {
     required this.updatedAt,
     this.status = EventStatus.completed,
     this.previousEventIds = const [],
+    this.images = const [],
   });
 
   final String id;
@@ -162,6 +163,9 @@ class EventItem {
   final DateTime updatedAt;
   final EventStatus status;
   final List<String> previousEventIds;
+
+  /// Base64-encoded image bytes. Local file paths are intentionally not stored.
+  final List<String> images;
 
   String get dateLabel {
     if (start.isEmpty) return '待定';
@@ -185,6 +189,7 @@ class EventItem {
     DateTime? updatedAt,
     EventStatus? status,
     List<String>? previousEventIds,
+    List<String>? images,
   }) => EventItem(
     id: id,
     title: title ?? this.title,
@@ -200,6 +205,7 @@ class EventItem {
     updatedAt: updatedAt ?? this.updatedAt,
     status: status ?? this.status,
     previousEventIds: previousEventIds ?? this.previousEventIds,
+    images: images ?? this.images,
   );
 
   Map<String, dynamic> toJson() => {
@@ -217,6 +223,7 @@ class EventItem {
     'updatedAt': updatedAt.toIso8601String(),
     'status': status.name,
     'previousEventIds': previousEventIds,
+    'images': images,
   };
 
   factory EventItem.fromJson(Map<String, dynamic> json) => EventItem(
@@ -238,6 +245,7 @@ class EventItem {
     updatedAt: DateTime.parse(json['updatedAt'] as String),
     status: _eventStatusFromJson(json['status'] as String? ?? 'completed'),
     previousEventIds: (json['previousEventIds'] as List? ?? []).cast<String>(),
+    images: (json['images'] as List? ?? []).cast<String>(),
   );
 }
 

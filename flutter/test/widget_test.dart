@@ -112,14 +112,19 @@ void main() {
     expect(find.text('跟随系统'), findsOneWidget);
     expect(find.byType(SegmentedButton<AppThemeMode>), findsOneWidget);
     expect(find.byType(RadioListTile<AppThemeMode>), findsNothing);
-    expect(find.text('森林绿'), findsOneWidget);
+    expect(find.text('莓红 · 燕麦'), findsOneWidget);
+    expect(find.text('薄荷 · 炭灰'), findsOneWidget);
+    expect(find.text('宝蓝 · 明黄'), findsOneWidget);
+    expect(find.text('亮橙 · 深青'), findsOneWidget);
+    expect(find.text('草木 · 奶油'), findsOneWidget);
+    expect(find.text('彩色阴影'), findsOneWidget);
 
     await tester.tap(find.text('深色'));
     await tester.pumpAndSettle();
 
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.themeMode, ThemeMode.dark);
-    expect(app.darkTheme?.colorScheme.primary, const Color(0xff55c596));
+    expect(app.darkTheme?.colorScheme.primary, const Color(0xffb50031));
   });
 
   testWidgets('changes the new event precision preference', (tester) async {
@@ -230,6 +235,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(existing.precision.label), findsOneWidget);
+  });
+
+  testWidgets('shows an album-style image area in event editors', (
+    tester,
+  ) async {
+    const image =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EventEditor(
+            initial: seedArchive.events.first.copyWith(images: const [image]),
+            people: seedArchive.people,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('图片'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, '添加图片'), findsOneWidget);
+    expect(find.byTooltip('移除图片'), findsOneWidget);
   });
 
   testWidgets('uses an animated anchored menu for detail actions', (
