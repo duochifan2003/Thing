@@ -1,7 +1,7 @@
 name: person_event_atlas
 description: 本地优先的人物事件档案。
 publish_to: none
-version: 0.1.19+42
+version: 0.1.20+43
 
 environment:
   sdk: ^3.8.0
@@ -12,6 +12,7 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   country_state_city_pro: ^0.0.6
+  desktop_updater: ^2.7.0
   file_selector: ^1.0.3
   path: ^1.9.1
   path_provider: ^2.1.5

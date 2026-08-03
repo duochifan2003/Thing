@@ -21,22 +21,41 @@ void main() {
 
       expect(requested?.host, 'api.github.com');
       expect(release?.version, '0.1.5');
-      expect(release?.assetFor('windows')?.name, 'Thing-windows.zip');
+      expect(
+        release?.assetFor('windows')?.name,
+        'Thing-windows-v0.1.19-setup.exe',
+      );
     },
   );
 
-  test('selects only a Windows ZIP asset', () {
+  test('selects Windows setup installer over the ZIP package', () {
     final release = AppUpdateRelease.fromJson(
       _releaseJson(
         assets: [
-          _assetJson('Thing-windows.exe'),
-          _assetJson('Thing-windows.zip'),
-          _assetJson('Thing-macOS.zip'),
+          _assetJson(
+            'Thing-windows-v0.1.19-setup.exe',
+            size: 13177394,
+            digest:
+                'sha256:961adf40eb6795d3cc487d402d16d6c6247d503620e93bd3726ad72f7bc1b2d7',
+          ),
+          _assetJson('Thing-windows-v0.1.19.zip', size: 15440124),
+          _assetJson(
+            'Thing-macOS-v0.1.19.dmg',
+            size: 26523070,
+            digest:
+                'sha256:08587106257237b90fc0c6f92ac5b43aeb7eb29105ec3dd0a16c5f0d0e1809a8',
+          ),
         ],
       ),
     );
 
-    expect(release.assetFor('windows')?.name, 'Thing-windows.zip');
+    final asset = release.assetFor('windows');
+    expect(asset?.name, 'Thing-windows-v0.1.19-setup.exe');
+    expect(asset?.size, 13177394);
+    expect(
+      asset?.sha256,
+      '961adf40eb6795d3cc487d402d16d6c6247d503620e93bd3726ad72f7bc1b2d7',
+    );
   });
 
   test('does not report an older or equal release', () async {
@@ -61,7 +80,9 @@ void main() {
   test('prefers a macOS DMG when both macOS package types exist', () {
     final release = AppUpdateRelease.fromJson(_releaseJson(macAssets: true));
 
-    expect(release.assetFor('macos')?.name, 'Thing-macOS.dmg');
+    final asset = release.assetFor('macos');
+    expect(asset?.name, 'Thing-macOS-v0.1.19.dmg');
+    expect(asset?.size, 26523070);
     expect(release.assetFor('android'), isNull);
   });
 
@@ -97,14 +118,38 @@ Map<String, dynamic> _releaseJson({
   'assets':
       assets ??
       [
-        _assetJson('Thing-windows.zip'),
-        if (macAssets) _assetJson('Thing-macOS.zip'),
-        if (macAssets) _assetJson('Thing-macOS.dmg'),
+        _assetJson(
+          'Thing-windows-v0.1.19-setup.exe',
+          size: 13177394,
+          digest:
+              'sha256:961adf40eb6795d3cc487d402d16d6c6247d503620e93bd3726ad72f7bc1b2d7',
+        ),
+        _assetJson(
+          'Thing-windows-v0.1.19.zip',
+          size: 15440124,
+          digest:
+              'sha256:5428b616a0cc4981be6dd0d203ce6f2389d5fc54e51d9958064aadbfe198a4f6',
+        ),
+        if (macAssets) _assetJson('Thing-macOS-v0.1.19.zip'),
+        if (macAssets)
+          _assetJson(
+            'Thing-macOS-v0.1.19.dmg',
+            size: 26523070,
+            digest:
+                'sha256:08587106257237b90fc0c6f92ac5b43aeb7eb29105ec3dd0a16c5f0d0e1809a8',
+          ),
       ],
 };
 
-Map<String, String> _assetJson(String name) => {
+Map<String, dynamic> _assetJson(
+  String name, {
+  int size = 15440124,
+  String digest =
+      'sha256:5428b616a0cc4981be6dd0d203ce6f2389d5fc54e51d9958064aadbfe198a4f6',
+}) => {
   'name': name,
   'browser_download_url':
-      'https://github.com/duochifan2003/Thing/releases/download/v0.1.5/$name',
+      'https://github.com/duochifan2003/Thing/releases/download/v0.1.19/$name',
+  'size': size,
+  'digest': digest,
 };
