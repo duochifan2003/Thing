@@ -157,9 +157,23 @@ class AppUpdateService {
     if (operatingSystem == 'macos') {
       await _launchMacInstaller(temporary, archive);
     } else {
-      await _launchWindowsInstaller(temporary, archive);
+      final installerStarted = io.File(
+        path.join(temporary.path, 'installer-started'),
+      );
+      await _launchWindowsInstaller(temporary, archive, installerStarted);
+      await _waitForInstallerStart(installerStarted);
     }
     _exitApp(0);
+  }
+
+  Future<void> _waitForInstallerStart(io.File marker) async {
+    for (var attempt = 0; attempt < 100; attempt++) {
+      if (await marker.exists()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw AppUpdateException(
+      '更新安装器未启动，应用保持打开。请查看 ${path.dirname(marker.path)} 中的安装日志。',
+    );
   }
 
   Future<String> _fetchLatestRelease(Uri uri) async {
@@ -275,6 +289,7 @@ open "\$TARGET_APP"
   Future<void> _launchWindowsInstaller(
     io.Directory temporary,
     io.File archive,
+    io.File installerStarted,
   ) async {
     final executable = io.Platform.resolvedExecutable;
     final targetDirectory = path.dirname(executable);
@@ -300,6 +315,8 @@ open "\$TARGET_APP"
       executableName,
       '-LogPath',
       log.path,
+      '-StartMarker',
+      installerStarted.path,
     ], mode: io.ProcessStartMode.detached);
   }
 }
@@ -311,6 +328,7 @@ param(
   [string]$TargetDirectory,
   [string]$ExecutableName,
   [string]$LogPath,
+  [string]$StartMarker,
   [switch]$Elevated
 )
 $ErrorActionPreference = 'Stop'
@@ -318,6 +336,19 @@ $ErrorActionPreference = 'Stop'
 function Write-UpdateLog([string]$Message) {
   try {
     Add-Content -LiteralPath $LogPath -Value ((Get-Date).ToString('o') + ' ' + $Message)
+  } catch {
+  }
+}
+
+function Show-UpdateFailure([string]$Message) {
+  try {
+    Add-Type -AssemblyName PresentationFramework
+    [System.Windows.MessageBox]::Show(
+      $Message,
+      'Thing',
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Error
+    ) | Out-Null
   } catch {
   }
 }
@@ -336,6 +367,7 @@ function Start-ElevatedUpdate {
     '-TargetDirectory', (Quote-ProcessArgument $TargetDirectory),
     '-ExecutableName', (Quote-ProcessArgument $ExecutableName),
     '-LogPath', (Quote-ProcessArgument $LogPath),
+    '-StartMarker', (Quote-ProcessArgument $StartMarker),
     '-Elevated'
   ) -join ' '
   $child = Start-Process `
@@ -394,6 +426,9 @@ function Invoke-Update {
 }
 
 try {
+  # Windows PowerShell 5.1 supports -Path here, not -LiteralPath.
+  New-Item -Path $StartMarker -ItemType File -Force | Out-Null
+  Write-UpdateLog '安装器已启动。'
   if (-not $Elevated) {
     try {
       Invoke-Update
@@ -409,9 +444,12 @@ try {
   }
   Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $StartMarker -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 } catch {
-  Write-UpdateLog ('更新失败：' + $_.Exception.Message)
+  $message = 'Thing 更新失败，请重试。' + [Environment]::NewLine + $_.Exception.Message
+  Write-UpdateLog $message
+  Show-UpdateFailure $message
   exit 1
 }
 ''';
