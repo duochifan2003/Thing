@@ -6,9 +6,9 @@ import 'package:path/path.dart' as path;
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.12',
+  defaultValue: '0.1.13',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '35');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '36');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -152,14 +152,26 @@ class AppUpdateService {
     final archive = io.File(
       path.join(temporary.path, _safeFileName(asset.name)),
     );
+    final installerStarted = io.File(
+      path.join(temporary.path, 'installer-started'),
+    );
     await _download(asset.downloadUrl, archive, onProgress);
 
     if (operatingSystem == 'macos') {
-      await _launchMacInstaller(temporary, archive);
+      await _launchMacInstaller(temporary, archive, installerStarted);
     } else {
-      await _launchWindowsInstaller(temporary, archive);
+      await _launchWindowsInstaller(temporary, archive, installerStarted);
     }
+    await _waitForInstallerStart(installerStarted);
     _exitApp(0);
+  }
+
+  Future<void> _waitForInstallerStart(io.File marker) async {
+    for (var attempt = 0; attempt < 50; attempt++) {
+      if (await marker.exists()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw const AppUpdateException('更新安装器未启动，应用保持打开。');
   }
 
   Future<String> _fetchLatestRelease(Uri uri) async {
@@ -228,6 +240,7 @@ class AppUpdateService {
   Future<void> _launchMacInstaller(
     io.Directory temporary,
     io.File archive,
+    io.File installerStarted,
   ) async {
     final executable = io.Platform.resolvedExecutable;
     final marker = '${path.separator}Contents${path.separator}MacOS';
@@ -244,9 +257,11 @@ PID=${io.pid}
 ARCHIVE=${_shellQuote(archive.path)}
 TARGET_APP=${_shellQuote(targetApp)}
 LOG_PATH=${_shellQuote(log.path)}
+START_MARKER=${_shellQuote(installerStarted.path)}
 MOUNT_POINT="\${TMPDIR:-/tmp}/thing-update-mount-\$\$"
 BACKUP_APP="\${TARGET_APP}.update-backup-\$\$"
 exec >>"\$LOG_PATH" 2>&1
+: >"\$START_MARKER"
 
 log() {
   print -r -- "\$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ') \$*"
@@ -314,11 +329,7 @@ log "更新完成"
     if (chmod.exitCode != 0) {
       throw const AppUpdateException('无法准备 macOS 更新安装器。');
     }
-    final open = await io.Process.run('/usr/bin/open', [
-      '-a',
-      'Terminal',
-      script.path,
-    ]);
+    final open = await io.Process.run('/usr/bin/open', [script.path]);
     if (open.exitCode != 0) {
       throw AppUpdateException('无法启动 macOS 更新安装器：${open.stderr}'.trim());
     }
@@ -327,6 +338,7 @@ log "更新完成"
   Future<void> _launchWindowsInstaller(
     io.Directory temporary,
     io.File archive,
+    io.File installerStarted,
   ) async {
     final executable = io.Platform.resolvedExecutable;
     final targetDirectory = path.dirname(executable);
@@ -352,6 +364,8 @@ log "更新完成"
       executableName,
       '-LogPath',
       log.path,
+      '-StartMarker',
+      installerStarted.path,
     ], mode: io.ProcessStartMode.detached);
   }
 }
@@ -368,6 +382,7 @@ param(
   [string]$TargetDirectory,
   [string]$ExecutableName,
   [string]$LogPath,
+  [string]$StartMarker,
   [switch]$Elevated
 )
 $ErrorActionPreference = 'Stop'
@@ -406,6 +421,7 @@ function Start-ElevatedUpdate {
     '-TargetDirectory', (Quote-ProcessArgument $TargetDirectory),
     '-ExecutableName', (Quote-ProcessArgument $ExecutableName),
     '-LogPath', (Quote-ProcessArgument $LogPath),
+    '-StartMarker', (Quote-ProcessArgument $StartMarker),
     '-Elevated'
   ) -join ' '
   $child = Start-Process `
@@ -497,6 +513,8 @@ function Invoke-Update {
 }
 
 try {
+  New-Item -LiteralPath $StartMarker -ItemType File -Force | Out-Null
+  Write-UpdateLog '安装器已启动。'
   if (-not $Elevated) {
     try {
       Invoke-Update
@@ -512,6 +530,7 @@ try {
   }
   Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $StartMarker -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 } catch {
   $message = 'Thing 更新失败，请重试。' + [Environment]::NewLine + $_.Exception.Message
