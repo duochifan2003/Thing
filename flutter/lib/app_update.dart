@@ -6,9 +6,9 @@ import 'package:path/path.dart' as path;
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.18',
+  defaultValue: '0.1.19',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '41');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '42');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -391,6 +391,7 @@ param(
   [switch]$Elevated
 )
 $ErrorActionPreference = 'Stop'
+$UpdateDirectory = Split-Path -Parent $Archive
 
 function Write-UpdateLog([string]$Message) {
   try {
@@ -501,7 +502,9 @@ function Invoke-Update {
       try {
         Move-Item -LiteralPath $TargetDirectory -Destination $backupDirectory
         $movedTarget = $true
-        Move-Item -LiteralPath $stagedDirectory -Destination $TargetDirectory
+        New-Item -Path $TargetDirectory -ItemType Directory -Force | Out-Null
+        Get-ChildItem -LiteralPath $stagedDirectory -Force |
+          Copy-Item -Destination $TargetDirectory -Recurse -Force
         if (-not (Test-Path -LiteralPath $targetExecutable)) {
           throw '替换文件后未找到应用程序。'
         }
@@ -530,13 +533,13 @@ function Invoke-Update {
 }
 
 try {
+  New-Item -Path $StartMarker -ItemType File -Force | Out-Null
+  Write-UpdateLog '安装器已启动。'
   if (-not $Elevated -and -not (Test-TargetDirectoryWritable)) {
     Write-UpdateLog '安装目录需要管理员权限，准备请求 UAC。'
     Start-ElevatedUpdate
     exit 0
   }
-  New-Item -Path $StartMarker -ItemType File -Force | Out-Null
-  Write-UpdateLog '安装器已启动。'
   if (-not $Elevated) {
     try {
       Invoke-Update
@@ -554,9 +557,13 @@ try {
   Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $StartMarker -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $UpdateDirectory -Recurse -Force -ErrorAction SilentlyContinue
 } catch {
   $message = 'Thing 更新失败，请重试。' + [Environment]::NewLine + $_.Exception.Message
   Write-UpdateLog $message
+  Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $StartMarker -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
   Show-UpdateFailure $message
   exit 1
 }
