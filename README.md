@@ -28,7 +28,8 @@ Thing 是一个本地优先的人物与事件档案工具。它适合整理人�
 | 平台 | 发布包 | 说明 |
 | --- | --- | --- |
 | macOS | `Thing-macOS-*.dmg` | 打开 DMG 后将 Thing 拖入“应用程序” |
-| Windows | `Thing-windows-*.zip` | 解压后运行 `Thing.exe` |
+| Windows 安装版 | `Thing-windows-v*-setup.exe` | 推荐，自动安装并创建快捷方式 |
+| Windows 便携版 | `Thing-windows-v*.zip` | 解压后运行 `Thing.exe` |
 | Android | 源码构建 | 当前仓库提供 Android 工程，暂未提供公开 APK |
 
 ## macOS 安装
@@ -42,13 +43,14 @@ Thing 是一个本地优先的人物与事件档案工具。它适合整理人�
 
 ## Windows 安装
 
-1. 在最新 Release 下载 Windows ZIP。
-2. 将 ZIP 解压到一个有写入权限的文件夹，例如 `D:\Apps\Thing`。
-3. 运行解压目录中的 `Thing.exe`。建议为它创建桌面快捷方式。
+1. 在最新 Release 下载 `Thing-windows-v*-setup.exe` 安装包。
+2. 双击运行安装程序，默认安装到 `%LOCALAPPDATA%\Programs\Thing`，通常不需要管理员权限。
+3. 安装程序会创建开始菜单入口和桌面快捷方式。
 4. 如果 Windows SmartScreen 显示警告，确认下载来源为本仓库 Release 后点击“更多信息 → 仍要运行”。
-5. 后续版本可以在“设置 → 应用更新”中检查并安装。
+5. 也可以下载同一版本的 ZIP 便携版，解压后直接运行 `Thing.exe`。
+6. 后续版本可以在“设置 → 应用更新”中检查并安装。
 
-Windows 包是免安装目录包，删除整个目录会删除程序文件；档案数据由应用单独保存，不要把 SQLite 数据库文件直接放进同步文件夹。
+卸载程序只删除程序文件，不会主动删除档案数据；不要把 SQLite 数据库文件直接放进同步文件夹。应用内自动更新仍使用 ZIP 包，以便在关闭应用后替换程序文件。
 
 ## 应用内更新
 

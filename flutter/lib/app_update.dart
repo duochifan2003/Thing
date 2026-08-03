@@ -6,9 +6,9 @@ import 'package:path/path.dart' as path;
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.16',
+  defaultValue: '0.1.17',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '39');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '40');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -167,11 +167,13 @@ class AppUpdateService {
   }
 
   Future<void> _waitForInstallerStart(io.File marker) async {
-    for (var attempt = 0; attempt < 50; attempt++) {
+    for (var attempt = 0; attempt < 100; attempt++) {
       if (await marker.exists()) return;
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
-    throw const AppUpdateException('更新安装器未启动，应用保持打开。');
+    throw AppUpdateException(
+      '更新安装器未启动，应用保持打开。请查看 ${path.dirname(marker.path)} 中的安装日志。',
+    );
   }
 
   Future<String> _fetchLatestRelease(Uri uri) async {
@@ -407,6 +409,18 @@ function Show-UpdateFailure([string]$Message) {
   }
 }
 
+function Test-TargetDirectoryWritable {
+  $probe = Join-Path $TargetDirectory ('.thing-update-probe-' + [Guid]::NewGuid().ToString('N'))
+  try {
+    New-Item -Path $probe -ItemType File -Force | Out-Null
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    return $true
+  } catch {
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+}
+
 function Start-ElevatedUpdate {
   function Quote-ProcessArgument([string]$Value) {
     return '"' + $Value + '"'
@@ -513,7 +527,12 @@ function Invoke-Update {
 }
 
 try {
-  New-Item -LiteralPath $StartMarker -ItemType File -Force | Out-Null
+  if (-not $Elevated -and -not (Test-TargetDirectoryWritable)) {
+    Write-UpdateLog '安装目录需要管理员权限，准备请求 UAC。'
+    Start-ElevatedUpdate
+    exit 0
+  }
+  New-Item -Path $StartMarker -ItemType File -Force | Out-Null
   Write-UpdateLog '安装器已启动。'
   if (-not $Elevated) {
     try {
