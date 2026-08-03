@@ -40,30 +40,64 @@ abstract final class AtlasPalette {
 bool _isDark(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark;
 
-Color _detailSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff292d32) : const Color(0xfff1f4ef);
+Color _detailSurface(BuildContext context) => Color.alphaBlend(
+  Theme.of(
+    context,
+  ).colorScheme.secondary.withAlpha(_isDark(context) ? 0x35 : 0x1f),
+  Theme.of(context).colorScheme.surface,
+);
 
-Color _detailGroupSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff30353b) : const Color(0xfff9fbf7);
+Color _detailGroupSurface(BuildContext context) => Color.alphaBlend(
+  Theme.of(
+    context,
+  ).colorScheme.primary.withAlpha(_isDark(context) ? 0x42 : 0x28),
+  Theme.of(context).colorScheme.surface,
+);
 
-Color _personSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff3d4673) : AtlasPalette.personSurface;
+Color _personSurface(BuildContext context) => Color.alphaBlend(
+  Theme.of(
+    context,
+  ).colorScheme.secondary.withAlpha(_isDark(context) ? 0x72 : 0x40),
+  Theme.of(context).colorScheme.surface,
+);
 
-Color _personOnSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xffdfe3ff) : AtlasPalette.personOnSurface;
+Color _personOnSurface(BuildContext context) => Color.lerp(
+  Theme.of(context).colorScheme.onSurfaceVariant,
+  Theme.of(context).colorScheme.secondary,
+  _isDark(context) ? 0.32 : 0.48,
+)!;
 
-Color _personTagSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff4f3a57) : AtlasPalette.personTagSurface;
+Color _personTagSurface(BuildContext context) => Color.alphaBlend(
+  Theme.of(
+    context,
+  ).colorScheme.primary.withAlpha(_isDark(context) ? 0x66 : 0x35),
+  Theme.of(context).colorScheme.surface,
+);
 
 Color _personTagOnSurface(BuildContext context) => _isDark(context)
-    ? const Color(0xffefd8f5)
-    : AtlasPalette.personTagOnSurface;
+    ? Color.lerp(
+        Theme.of(context).colorScheme.onSurfaceVariant,
+        Theme.of(context).colorScheme.primary,
+        0.34,
+      )!
+    : Color.lerp(
+        Theme.of(context).colorScheme.onSurfaceVariant,
+        Theme.of(context).colorScheme.primary,
+        0.48,
+      )!;
 
-Color _eventTagSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff3a4048) : AtlasPalette.eventTagSurface;
+Color _eventTagSurface(BuildContext context) => Color.alphaBlend(
+  Theme.of(
+    context,
+  ).colorScheme.secondary.withAlpha(_isDark(context) ? 0x58 : 0x2e),
+  Theme.of(context).colorScheme.surface,
+);
 
-Color _eventTagOnSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xffd8dee6) : AtlasPalette.eventTagOnSurface;
+Color _eventTagOnSurface(BuildContext context) => Color.lerp(
+  Theme.of(context).colorScheme.onSurfaceVariant,
+  Theme.of(context).colorScheme.secondary,
+  _isDark(context) ? 0.28 : 0.42,
+)!;
 
 Color _eventStatusColor(EventStatus status) => switch (status) {
   EventStatus.scheduled => const Color(0xffffedd2),
@@ -326,34 +360,34 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
 
 ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
   final dark = brightness == Brightness.dark;
+  final primary = Color(dark ? primaryColor.darkValue : primaryColor.value);
   final companion = Color(primaryColor.companionValue);
   final paper = Color.lerp(
     dark ? const Color(0xff0f1012) : AtlasPalette.paper,
-    companion,
-    dark ? 0.06 : 0.10,
+    primary,
+    dark ? 0.16 : 0.08,
   )!;
   final sidebar = Color.lerp(
     dark ? const Color(0xff17191c) : AtlasPalette.sidebar,
-    companion,
-    dark ? 0.08 : 0.16,
+    primary,
+    dark ? 0.24 : 0.18,
   )!;
   final card = Color.lerp(
     dark ? const Color(0xff222529) : AtlasPalette.card,
     companion,
-    dark ? 0.04 : 0.06,
+    dark ? 0.18 : 0.12,
   )!;
   final ink = dark ? const Color(0xfff2f2f3) : AtlasPalette.ink;
   final muted = Color.lerp(
     dark ? const Color(0xffa6a9ae) : AtlasPalette.muted,
     companion,
-    0.08,
+    dark ? 0.14 : 0.10,
   )!;
   final line = Color.lerp(
     dark ? const Color(0xff3b3e43) : AtlasPalette.line,
-    companion,
-    0.18,
+    primary,
+    dark ? 0.45 : 0.30,
   )!;
-  final primary = Color(dark ? primaryColor.darkValue : primaryColor.value);
   final onPrimary = primary.computeLuminance() > 0.5
       ? Colors.black
       : Colors.white;
@@ -367,6 +401,7 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
     onSecondary: onSecondary,
     surface: card,
     onSurface: ink,
+    onSurfaceVariant: muted,
     outline: line,
   );
   return ThemeData(
@@ -426,15 +461,15 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
       overlayColor: WidgetStatePropertyAll<Color?>(primary.withAlpha(0x1f)),
     ),
     chipTheme: ChipThemeData(
-      backgroundColor: dark ? const Color(0xff2c2f34) : const Color(0xffedf3ea),
+      backgroundColor: Color.alphaBlend(
+        primary.withAlpha(dark ? 0x3b : 0x24),
+        card,
+      ),
       side: BorderSide.none,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(8)),
       ),
-      labelStyle: TextStyle(
-        color: dark ? ink : const Color(0xff41614f),
-        fontSize: 11,
-      ),
+      labelStyle: TextStyle(color: muted, fontSize: 11),
       padding: const EdgeInsets.symmetric(horizontal: 4),
     ),
     listTileTheme: const ListTileThemeData(
@@ -462,16 +497,22 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
       ),
     ),
     dialogTheme: DialogThemeData(
+      backgroundColor: card,
+      surfaceTintColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(20)),
       ),
     ),
-    popupMenuTheme: const PopupMenuThemeData(
+    popupMenuTheme: PopupMenuThemeData(
+      color: card,
+      textStyle: TextStyle(color: ink),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(14)),
       ),
     ),
-    snackBarTheme: const SnackBarThemeData(
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: sidebar,
+      contentTextStyle: TextStyle(color: ink),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(12)),
       ),

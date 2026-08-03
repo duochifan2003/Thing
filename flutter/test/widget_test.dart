@@ -165,6 +165,11 @@ void main() {
     final paletteApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(paletteApp.theme?.colorScheme.primary, const Color(0xffb50031));
     expect(paletteApp.theme?.colorScheme.secondary, const Color(0xffdac9b1));
+    expect(
+      paletteApp.theme?.scaffoldBackgroundColor,
+      isNot(const Color(0xfff7f7f1)),
+    );
+    expect(paletteApp.theme?.cardTheme.color, isNot(const Color(0xfffffefa)));
 
     await tester.tap(find.text('深色'));
     await tester.pumpAndSettle();
@@ -172,6 +177,11 @@ void main() {
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.themeMode, ThemeMode.dark);
     expect(app.darkTheme?.colorScheme.primary, const Color(0xffb50031));
+    expect(
+      app.darkTheme?.scaffoldBackgroundColor,
+      isNot(const Color(0xff0f1012)),
+    );
+    expect(app.darkTheme?.cardTheme.color, isNot(const Color(0xff222529)));
   });
 
   testWidgets('changes the new event precision preference', (tester) async {
