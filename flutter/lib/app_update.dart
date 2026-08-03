@@ -6,9 +6,9 @@ import 'package:path/path.dart' as path;
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.11',
+  defaultValue: '0.1.12',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '34');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '35');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -236,40 +236,92 @@ class AppUpdateService {
       throw const AppUpdateException('无法确定 macOS 应用安装位置。');
     }
     final targetApp = executable.substring(0, markerIndex);
-    final script = io.File(path.join(temporary.path, 'install-update.sh'));
-    await script.writeAsString('''#!/bin/sh
-set -eu
-PID="\$1"
-ARCHIVE="\$2"
-TARGET_APP="\$3"
-MOUNT_POINT="\${TMPDIR:-/tmp}/event-atlas-mount-\$\$"
-while kill -0 "\$PID" 2>/dev/null; do sleep 1; done
-mkdir -p "\$MOUNT_POINT"
+    final script = io.File(path.join(temporary.path, 'install-update.command'));
+    final log = io.File(path.join(temporary.path, 'install-update.log'));
+    await script.writeAsString('''#!/bin/zsh
+set -u
+PID=${io.pid}
+ARCHIVE=${_shellQuote(archive.path)}
+TARGET_APP=${_shellQuote(targetApp)}
+LOG_PATH=${_shellQuote(log.path)}
+MOUNT_POINT="\${TMPDIR:-/tmp}/thing-update-mount-\$\$"
+BACKUP_APP="\${TARGET_APP}.update-backup-\$\$"
+exec >>"\$LOG_PATH" 2>&1
+
+log() {
+  print -r -- "\$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ') \$*"
+}
+
+fail() {
+  log "更新失败：\$1"
+  /usr/bin/osascript -e 'display dialog "Thing 更新失败，请重试。" buttons {"好"} default button "好"' >/dev/null 2>&1 || true
+  exit 1
+}
+
 cleanup() {
-  hdiutil detach "\$MOUNT_POINT" >/dev/null 2>&1 || true
-  rm -rf "\$MOUNT_POINT" "\$ARCHIVE" "\$0"
+  /usr/bin/hdiutil detach "\$MOUNT_POINT" >/dev/null 2>&1 || true
+  /bin/rm -rf "\$MOUNT_POINT"
 }
 trap cleanup EXIT
-hdiutil attach -nobrowse -readonly -mountpoint "\$MOUNT_POINT" "\$ARCHIVE" >/dev/null
-SOURCE_APP="\$(find "\$MOUNT_POINT" -maxdepth 1 -name '*.app' -print -quit)"
-if [ -z "\$SOURCE_APP" ]; then exit 1; fi
-/usr/bin/osascript - "\$SOURCE_APP" "\$TARGET_APP" <<'APPLESCRIPT'
+
+DEADLINE=\$(( \$(/bin/date +%s) + 60 ))
+while /bin/kill -0 "\$PID" 2>/dev/null; do
+  if [ "\$(/bin/date +%s)" -ge "\$DEADLINE" ]; then
+    fail "等待应用退出超时"
+  fi
+  /bin/sleep 0.2
+done
+/bin/mkdir -p "\$MOUNT_POINT" || fail "无法创建临时目录"
+/usr/bin/hdiutil attach -nobrowse -readonly -mountpoint "\$MOUNT_POINT" "\$ARCHIVE" >/dev/null || fail "无法打开更新包"
+SOURCE_APP="\$(/usr/bin/find "\$MOUNT_POINT" -maxdepth 1 -type d -name '*.app' -print -quit)"
+[ -n "\$SOURCE_APP" ] || fail "更新包中没有找到应用"
+log "准备安装 \$SOURCE_APP 到 \$TARGET_APP"
+
+install_as_user() {
+  /bin/mv "\$TARGET_APP" "\$BACKUP_APP" || return 1
+  if /usr/bin/ditto "\$SOURCE_APP" "\$TARGET_APP"; then
+    /bin/rm -rf "\$BACKUP_APP"
+    return 0
+  fi
+  /bin/rm -rf "\$TARGET_APP"
+  /bin/mv "\$BACKUP_APP" "\$TARGET_APP" || true
+  return 1
+}
+
+install_as_admin() {
+  /usr/bin/osascript - "\$SOURCE_APP" "\$TARGET_APP" "\$BACKUP_APP" <<'APPLESCRIPT'
 on run argv
   set sourceApp to item 1 of argv
   set targetApp to item 2 of argv
-  set installCommand to "/bin/rm -rf " & quoted form of targetApp & " && /usr/bin/ditto " & quoted form of sourceApp & " " & quoted form of targetApp
+  set backupApp to item 3 of argv
+  set installCommand to "/bin/mv " & quoted form of targetApp & " " & quoted form of backupApp & " && if /usr/bin/ditto " & quoted form of sourceApp & " " & quoted form of targetApp & "; then /bin/rm -rf " & quoted form of backupApp & "; else /bin/rm -rf " & quoted form of targetApp & "; /bin/mv " & quoted form of backupApp & " " & quoted form of targetApp & "; exit 1; fi"
   do shell script installCommand with administrator privileges
 end run
 APPLESCRIPT
-open "\$TARGET_APP"
+}
+
+if ! install_as_user; then
+  log "普通用户权限不足，申请管理员权限"
+  install_as_admin || fail "没有权限替换应用"
+fi
+[ -d "\$TARGET_APP" ] || fail "应用替换后不存在"
+/usr/bin/open "\$TARGET_APP" || fail "无法重新打开应用"
+log "更新完成"
+/usr/bin/hdiutil detach "\$MOUNT_POINT" >/dev/null 2>&1 || true
+/bin/rm -rf "\$ARCHIVE" "\$LOG_PATH" "\$0" "\$BACKUP_APP"
 ''');
-    await io.Process.run('chmod', ['+x', script.path]);
-    await io.Process.start('/bin/sh', [
+    final chmod = await io.Process.run('chmod', ['+x', script.path]);
+    if (chmod.exitCode != 0) {
+      throw const AppUpdateException('无法准备 macOS 更新安装器。');
+    }
+    final open = await io.Process.run('/usr/bin/open', [
+      '-a',
+      'Terminal',
       script.path,
-      '${io.pid}',
-      archive.path,
-      targetApp,
-    ], mode: io.ProcessStartMode.detached);
+    ]);
+    if (open.exitCode != 0) {
+      throw AppUpdateException('无法启动 macOS 更新安装器：${open.stderr}'.trim());
+    }
   }
 
   Future<void> _launchWindowsInstaller(
@@ -280,52 +332,12 @@ open "\$TARGET_APP"
     final targetDirectory = path.dirname(executable);
     final executableName = path.basename(executable);
     final script = io.File(path.join(temporary.path, 'install-update.ps1'));
-    await script.writeAsString(r'''
-param(
-  [int]$ProcessId,
-  [string]$Archive,
-  [string]$TargetDirectory,
-  [string]$ExecutableName
-)
-$ErrorActionPreference = "Stop"
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal($identity)
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  $argumentList = @(
-    '-NoProfile',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', ('"{0}"' -f $PSCommandPath),
-    '-ProcessId', $ProcessId,
-    '-Archive', ('"{0}"' -f $Archive),
-    '-TargetDirectory', ('"{0}"' -f $TargetDirectory),
-    '-ExecutableName', ('"{0}"' -f $ExecutableName)
-  ) -join ' '
-  Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argumentList | Out-Null
-  exit
-}
-while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
-  Start-Sleep -Milliseconds 500
-}
-$ExtractDirectory = Join-Path $env:TEMP ("event-atlas-update-" + $ProcessId)
-Remove-Item $ExtractDirectory -Recurse -Force -ErrorAction SilentlyContinue
-New-Item $ExtractDirectory -ItemType Directory -Force | Out-Null
-Expand-Archive -LiteralPath $Archive -DestinationPath $ExtractDirectory -Force
-$SourceExecutable = Get-ChildItem $ExtractDirectory -Filter "*.exe" -File -Recurse |
-  Sort-Object @{ Expression = { $_.Name -ne $ExecutableName } }, FullName |
-  Select-Object -First 1
-if ($null -eq $SourceExecutable) { throw "更新包中没有找到应用程序。" }
-$InstalledExecutableName = $SourceExecutable.Name
-Copy-Item (Join-Path $SourceExecutable.Directory.FullName "*") $TargetDirectory -Recurse -Force
-if ($ExecutableName -ne $InstalledExecutableName) {
-  Remove-Item (Join-Path $TargetDirectory $ExecutableName) -Force -ErrorAction SilentlyContinue
-}
-Remove-Item $Archive -Force -ErrorAction SilentlyContinue
-Remove-Item $ExtractDirectory -Recurse -Force -ErrorAction SilentlyContinue
-Start-Process (Join-Path $TargetDirectory $InstalledExecutableName)
-Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
-''');
+    final log = io.File(path.join(temporary.path, 'install-update.log'));
+    await script.writeAsString('\uFEFF${_windowsUpdateScript()}');
     await io.Process.start('powershell.exe', [
       '-NoProfile',
+      '-WindowStyle',
+      'Hidden',
       '-ExecutionPolicy',
       'Bypass',
       '-File',
@@ -338,9 +350,176 @@ Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
       targetDirectory,
       '-ExecutableName',
       executableName,
+      '-LogPath',
+      log.path,
     ], mode: io.ProcessStartMode.detached);
   }
 }
+
+String _shellQuote(String value) {
+  final escaped = value.replaceAll("'", "'\"'\"'");
+  return "'$escaped'";
+}
+
+String _windowsUpdateScript() => r'''
+param(
+  [int]$ProcessId,
+  [string]$Archive,
+  [string]$TargetDirectory,
+  [string]$ExecutableName,
+  [string]$LogPath,
+  [switch]$Elevated
+)
+$ErrorActionPreference = 'Stop'
+
+function Write-UpdateLog([string]$Message) {
+  try {
+    Add-Content -LiteralPath $LogPath -Value ((Get-Date).ToString('o') + ' ' + $Message)
+  } catch {
+  }
+}
+
+function Show-UpdateFailure([string]$Message) {
+  try {
+    Add-Type -AssemblyName PresentationFramework
+    [System.Windows.MessageBox]::Show(
+      $Message,
+      'Thing',
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Error
+    ) | Out-Null
+  } catch {
+  }
+}
+
+function Start-ElevatedUpdate {
+  function Quote-ProcessArgument([string]$Value) {
+    return '"' + $Value + '"'
+  }
+  $argumentList = @(
+    '-NoProfile',
+    '-WindowStyle', 'Hidden',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', (Quote-ProcessArgument $PSCommandPath),
+    '-ProcessId', [string]$ProcessId,
+    '-Archive', (Quote-ProcessArgument $Archive),
+    '-TargetDirectory', (Quote-ProcessArgument $TargetDirectory),
+    '-ExecutableName', (Quote-ProcessArgument $ExecutableName),
+    '-LogPath', (Quote-ProcessArgument $LogPath),
+    '-Elevated'
+  ) -join ' '
+  $child = Start-Process `
+    -FilePath 'powershell.exe' `
+    -WindowStyle Hidden `
+    -Verb RunAs `
+    -ArgumentList $argumentList `
+    -PassThru
+  if ($null -eq $child) { throw '无法启动管理员权限更新进程。' }
+  Write-UpdateLog '已请求管理员权限重试更新。'
+}
+
+function Invoke-Update {
+  Set-Location ([IO.Path]::GetTempPath())
+  $processDeadline = (Get-Date).AddSeconds(60)
+  while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -gt $processDeadline) { throw '等待旧程序退出超时。' }
+    Start-Sleep -Milliseconds 200
+  }
+
+  $extractDirectory = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ('thing-update-extract-' + [Guid]::NewGuid().ToString('N'))
+  $stagedDirectory = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ('thing-update-stage-' + [Guid]::NewGuid().ToString('N'))
+  $backupDirectory = "${TargetDirectory}.update-backup-" + [Guid]::NewGuid().ToString('N')
+  try {
+    New-Item -Path $extractDirectory -ItemType Directory -Force | Out-Null
+    Expand-Archive -LiteralPath $Archive -DestinationPath $extractDirectory -Force
+    $sourceExecutable = Get-ChildItem -LiteralPath $extractDirectory `
+      -Filter $ExecutableName -File -Recurse | Select-Object -First 1
+    if ($null -eq $sourceExecutable) { throw '更新包中没有找到应用程序。' }
+
+    $targetExecutable = Join-Path $TargetDirectory $ExecutableName
+    $fileDeadline = (Get-Date).AddSeconds(30)
+    while (Test-Path -LiteralPath $targetExecutable) {
+      try {
+        $stream = [IO.File]::Open(
+          $targetExecutable,
+          [IO.FileMode]::Open,
+          [IO.FileAccess]::ReadWrite,
+          [IO.FileShare]::None
+        )
+        $stream.Dispose()
+        break
+      } catch {
+        if ((Get-Date) -gt $fileDeadline) { throw '旧程序文件仍被占用。' }
+        Start-Sleep -Milliseconds 200
+      }
+    }
+
+    New-Item -Path $stagedDirectory -ItemType Directory -Force | Out-Null
+    Get-ChildItem -LiteralPath $sourceExecutable.Directory.FullName -Force |
+      Copy-Item -Destination $stagedDirectory -Recurse -Force
+    $stagedExecutable = Join-Path $stagedDirectory $ExecutableName
+    if (-not (Test-Path -LiteralPath $stagedExecutable)) {
+      throw '更新文件准备后未找到应用程序。'
+    }
+
+    $swapDeadline = (Get-Date).AddSeconds(30)
+    while ($true) {
+      $movedTarget = $false
+      try {
+        Move-Item -LiteralPath $TargetDirectory -Destination $backupDirectory
+        $movedTarget = $true
+        Move-Item -LiteralPath $stagedDirectory -Destination $TargetDirectory
+        if (-not (Test-Path -LiteralPath $targetExecutable)) {
+          throw '替换文件后未找到应用程序。'
+        }
+        Remove-Item -LiteralPath $backupDirectory -Recurse -Force
+        $movedTarget = $false
+        break
+      } catch {
+        if ($movedTarget) {
+          Remove-Item -LiteralPath $TargetDirectory -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath $backupDirectory) {
+            Move-Item -LiteralPath $backupDirectory -Destination $TargetDirectory
+          }
+        }
+        if ((Get-Date) -gt $swapDeadline) {
+          throw '替换旧应用目录超时。'
+        }
+        Start-Sleep -Milliseconds 200
+      }
+    }
+    Start-Process -FilePath $targetExecutable -WorkingDirectory $TargetDirectory
+    Write-UpdateLog '更新完成。'
+  } finally {
+    Remove-Item -LiteralPath $extractDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stagedDirectory -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+try {
+  if (-not $Elevated) {
+    try {
+      Invoke-Update
+    } catch {
+      $accessDenied = $_.Exception -is [UnauthorizedAccessException] `
+        -or $_.FullyQualifiedErrorId -like '*UnauthorizedAccess*'
+      if (-not $accessDenied) { throw }
+      Start-ElevatedUpdate
+      exit 0
+    }
+  } else {
+    Invoke-Update
+  }
+  Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+} catch {
+  $message = 'Thing 更新失败，请重试。' + [Environment]::NewLine + $_.Exception.Message
+  Write-UpdateLog $message
+  Show-UpdateFailure $message
+  exit 1
+}
+''';
 
 String _safeFileName(String value) {
   final name = path.basename(value).replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
