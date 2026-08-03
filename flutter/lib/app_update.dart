@@ -1,14 +1,13 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
-import 'package:path/path.dart' as path;
+import 'package:desktop_updater/desktop_updater.dart';
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.10',
+  defaultValue: '0.1.21',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '33');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '44');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -29,10 +28,17 @@ class AppUpdateException implements Exception {
 }
 
 class AppUpdateAsset {
-  const AppUpdateAsset({required this.name, required this.downloadUrl});
+  const AppUpdateAsset({
+    required this.name,
+    required this.downloadUrl,
+    this.size = 0,
+    this.sha256 = '',
+  });
 
   final String name;
   final Uri downloadUrl;
+  final int size;
+  final String sha256;
 }
 
 class AppUpdateRelease {
@@ -57,7 +63,9 @@ class AppUpdateRelease {
         'macos' =>
           name.contains('macos') &&
               (name.endsWith('.dmg') || name.endsWith('.zip')),
-        'windows' => name.contains('windows') && name.endsWith('.zip'),
+        'windows' =>
+          name.contains('windows') &&
+              (name.endsWith('.zip') || name.endsWith('.exe')),
         _ => false,
       };
     }).toList();
@@ -68,7 +76,10 @@ class AppUpdateRelease {
         orElse: () => candidates.first,
       );
     }
-    return candidates.first;
+    return candidates.firstWhere(
+      (asset) => asset.name.toLowerCase().endsWith('-setup.exe'),
+      orElse: () => candidates.first,
+    );
   }
 
   factory AppUpdateRelease.fromJson(Map<String, dynamic> json) {
@@ -91,7 +102,17 @@ class AppUpdateRelease {
         if (name is! String || downloadUrl is! String) continue;
         final uri = Uri.tryParse(downloadUrl);
         if (uri == null || !_isAllowedGitHubUri(uri)) continue;
-        assets.add(AppUpdateAsset(name: name, downloadUrl: uri));
+        final digest = rawAsset['digest'];
+        assets.add(
+          AppUpdateAsset(
+            name: name,
+            downloadUrl: uri,
+            size: rawAsset['size'] is int ? rawAsset['size'] as int : 0,
+            sha256: digest is String && digest.startsWith('sha256:')
+                ? digest.substring('sha256:'.length).toLowerCase()
+                : '',
+          ),
+        );
       }
     }
     return AppUpdateRelease(
@@ -147,19 +168,85 @@ class AppUpdateService {
     if (operatingSystem != 'macos' && operatingSystem != 'windows') {
       throw const AppUpdateException('当前系统暂不支持自动安装更新。');
     }
+    if (asset.size <= 0 || !RegExp(r'^[0-9a-f]{64}$').hasMatch(asset.sha256)) {
+      throw const AppUpdateException('GitHub 更新包缺少有效的 SHA-256 校验信息。');
+    }
 
-    final temporary = await io.Directory.systemTemp.createTemp('thing-update-');
-    final archive = io.File(
-      path.join(temporary.path, _safeFileName(asset.name)),
-    );
-    await _download(asset.downloadUrl, archive, onProgress);
+    final descriptor = ReleaseDescriptor(
+      schemaVersion: 3,
+      packageId: 'local.munch.eventatlas',
+      appName: 'Thing',
+      version: release.version,
+      buildNumber: null,
+      platform: operatingSystem,
+      channel: 'stable',
+      artifact: ReleaseArtifact(
+        kind: _artifactKind(asset),
+        url: asset.downloadUrl,
+        sha256: asset.sha256,
+        length: asset.size,
+      ),
+      install: _installMetadata(asset),
+      minimumUpdaterVersion: '2.7.0',
+      generatedAt: DateTime.now().toUtc(),
+    )..validate();
 
-    if (operatingSystem == 'macos') {
-      await _launchMacInstaller(temporary, archive);
-    } else {
-      await _launchWindowsInstaller(temporary, archive);
+    try {
+      final staged = await DesktopUpdater().downloadZipFirstUpdate(
+        appArchiveUrl: Uri.parse(_latestReleaseUri),
+        currentVersion: DesktopVersionInfo.parse(currentVersion),
+        descriptor: descriptor,
+        onProgress: (received, total) {
+          if (total != null && total > 0) onProgress?.call(received / total);
+        },
+      );
+      onProgress?.call(1);
+      await DesktopUpdater().installUpdate(
+        stagingPath: staged.stagingPath,
+        allowUnsignedMacOSUpdates: true,
+      );
+    } on AppUpdateException {
+      rethrow;
+    } on Object catch (error) {
+      throw AppUpdateException('更新安装失败：$error');
     }
     _exitApp(0);
+  }
+
+  String _artifactKind(AppUpdateAsset asset) {
+    final name = asset.name.toLowerCase();
+    if (operatingSystem == 'macos' && name.endsWith('.dmg')) return 'dmg';
+    if (operatingSystem == 'windows' && name.endsWith('.exe')) {
+      return 'innoInstaller';
+    }
+    return 'zip';
+  }
+
+  ReleaseInstall _installMetadata(AppUpdateAsset asset) {
+    switch (_artifactKind(asset)) {
+      case 'dmg':
+        return const ReleaseInstall(
+          strategy: 'wholeBundleReplace',
+          macosDmg: ReleaseMacOSDmgInstall(
+            appBundleName: 'Thing.app',
+            verifyPrimarySignature: false,
+          ),
+        );
+      case 'innoInstaller':
+        return const ReleaseInstall(
+          strategy: 'innoInstaller',
+          inno: ReleaseInnoInstall(
+            silentArgs: ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
+            inheritInstallDirectory: true,
+            logFileName: 'thing-update.log',
+            relaunchAfterInstall: true,
+            requiresElevation: 'auto',
+            authenticode: ReleaseAuthenticodePolicy(required: false),
+          ),
+        );
+      default:
+        return const ReleaseInstall(strategy: 'wholeDirectoryReplace');
+    }
   }
 
   Future<String> _fetchLatestRelease(Uri uri) async {
@@ -189,236 +276,6 @@ class AppUpdateService {
       client.close(force: true);
     }
   }
-
-  Future<void> _download(
-    Uri uri,
-    io.File destination,
-    UpdateProgress? onProgress,
-  ) async {
-    final client = io.HttpClient()..userAgent = 'Thing/$currentVersion';
-    io.IOSink? sink;
-    try {
-      final request = await client.getUrl(uri);
-      final response = await request.close();
-      if (response.statusCode != io.HttpStatus.ok) {
-        throw AppUpdateException('更新包下载失败（HTTP ${response.statusCode}）。');
-      }
-      final total = response.contentLength;
-      var received = 0;
-      sink = destination.openWrite();
-      await for (final chunk in response) {
-        sink.add(chunk);
-        received += chunk.length;
-        if (total > 0) onProgress?.call(received / total);
-      }
-      await sink.flush();
-      await sink.close();
-      sink = null;
-      onProgress?.call(1);
-    } on AppUpdateException {
-      rethrow;
-    } on io.SocketException {
-      throw const AppUpdateException('更新包下载失败，请检查网络后重试。');
-    } finally {
-      await sink?.close();
-      client.close(force: true);
-    }
-  }
-
-  Future<void> _launchMacInstaller(
-    io.Directory temporary,
-    io.File archive,
-  ) async {
-    final executable = io.Platform.resolvedExecutable;
-    final marker = '${path.separator}Contents${path.separator}MacOS';
-    final markerIndex = executable.lastIndexOf(marker);
-    if (markerIndex < 0) {
-      throw const AppUpdateException('无法确定 macOS 应用安装位置。');
-    }
-    final targetApp = executable.substring(0, markerIndex);
-    final script = io.File(path.join(temporary.path, 'install-update.sh'));
-    await script.writeAsString('''#!/bin/sh
-set -eu
-PID="\$1"
-ARCHIVE="\$2"
-TARGET_APP="\$3"
-MOUNT_POINT="\${TMPDIR:-/tmp}/event-atlas-mount-\$\$"
-while kill -0 "\$PID" 2>/dev/null; do sleep 1; done
-mkdir -p "\$MOUNT_POINT"
-cleanup() {
-  hdiutil detach "\$MOUNT_POINT" >/dev/null 2>&1 || true
-  rm -rf "\$MOUNT_POINT" "\$ARCHIVE" "\$0"
-}
-trap cleanup EXIT
-hdiutil attach -nobrowse -readonly -mountpoint "\$MOUNT_POINT" "\$ARCHIVE" >/dev/null
-SOURCE_APP="\$(find "\$MOUNT_POINT" -maxdepth 1 -name '*.app' -print -quit)"
-if [ -z "\$SOURCE_APP" ]; then exit 1; fi
-/usr/bin/osascript - "\$SOURCE_APP" "\$TARGET_APP" <<'APPLESCRIPT'
-on run argv
-  set sourceApp to item 1 of argv
-  set targetApp to item 2 of argv
-  set installCommand to "/bin/rm -rf " & quoted form of targetApp & " && /usr/bin/ditto " & quoted form of sourceApp & " " & quoted form of targetApp
-  do shell script installCommand with administrator privileges
-end run
-APPLESCRIPT
-open "\$TARGET_APP"
-''');
-    await io.Process.run('chmod', ['+x', script.path]);
-    await io.Process.start('/bin/sh', [
-      script.path,
-      '${io.pid}',
-      archive.path,
-      targetApp,
-    ], mode: io.ProcessStartMode.detached);
-  }
-
-  Future<void> _launchWindowsInstaller(
-    io.Directory temporary,
-    io.File archive,
-  ) async {
-    final executable = io.Platform.resolvedExecutable;
-    final targetDirectory = path.dirname(executable);
-    final executableName = path.basename(executable);
-    final script = io.File(path.join(temporary.path, 'install-update.ps1'));
-    final log = io.File(path.join(temporary.path, 'install-update.log'));
-    await script.writeAsString('\uFEFF${_windowsUpdateScript()}');
-    await io.Process.start('powershell.exe', [
-      '-NoProfile',
-      '-WindowStyle',
-      'Hidden',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      script.path,
-      '-ProcessId',
-      '${io.pid}',
-      '-Archive',
-      archive.path,
-      '-TargetDirectory',
-      targetDirectory,
-      '-ExecutableName',
-      executableName,
-      '-LogPath',
-      log.path,
-    ], mode: io.ProcessStartMode.detached);
-  }
-}
-
-String _windowsUpdateScript() => r'''
-param(
-  [int]$ProcessId,
-  [string]$Archive,
-  [string]$TargetDirectory,
-  [string]$ExecutableName,
-  [string]$LogPath,
-  [switch]$Elevated
-)
-$ErrorActionPreference = 'Stop'
-
-function Write-UpdateLog([string]$Message) {
-  try {
-    Add-Content -LiteralPath $LogPath -Value ((Get-Date).ToString('o') + ' ' + $Message)
-  } catch {
-  }
-}
-
-function Start-ElevatedUpdate {
-  function Quote-ProcessArgument([string]$Value) {
-    return '"' + $Value + '"'
-  }
-  $argumentList = @(
-    '-NoProfile',
-    '-WindowStyle', 'Hidden',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', (Quote-ProcessArgument $PSCommandPath),
-    '-ProcessId', [string]$ProcessId,
-    '-Archive', (Quote-ProcessArgument $Archive),
-    '-TargetDirectory', (Quote-ProcessArgument $TargetDirectory),
-    '-ExecutableName', (Quote-ProcessArgument $ExecutableName),
-    '-LogPath', (Quote-ProcessArgument $LogPath),
-    '-Elevated'
-  ) -join ' '
-  $child = Start-Process `
-    -FilePath 'powershell.exe' `
-    -WindowStyle Hidden `
-    -Verb RunAs `
-    -ArgumentList $argumentList `
-    -PassThru
-  if ($null -eq $child) { throw '无法启动管理员权限更新进程。' }
-  Write-UpdateLog '已请求管理员权限重试更新。'
-}
-
-function Invoke-Update {
-  $processDeadline = (Get-Date).AddSeconds(60)
-  while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
-    if ((Get-Date) -gt $processDeadline) { throw '等待旧程序退出超时。' }
-    Start-Sleep -Milliseconds 200
-  }
-
-  $extractDirectory = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ('thing-update-extract-' + [Guid]::NewGuid().ToString('N'))
-  try {
-    New-Item -Path $extractDirectory -ItemType Directory -Force | Out-Null
-    Expand-Archive -LiteralPath $Archive -DestinationPath $extractDirectory -Force
-    $sourceExecutable = Get-ChildItem -LiteralPath $extractDirectory `
-      -Filter $ExecutableName -File -Recurse | Select-Object -First 1
-    if ($null -eq $sourceExecutable) { throw '更新包中没有找到应用程序。' }
-
-    $targetExecutable = Join-Path $TargetDirectory $ExecutableName
-    $fileDeadline = (Get-Date).AddSeconds(30)
-    while (Test-Path -LiteralPath $targetExecutable) {
-      try {
-        $stream = [IO.File]::Open(
-          $targetExecutable,
-          [IO.FileMode]::Open,
-          [IO.FileAccess]::ReadWrite,
-          [IO.FileShare]::None
-        )
-        $stream.Dispose()
-        break
-      } catch {
-        if ((Get-Date) -gt $fileDeadline) { throw '旧程序文件仍被占用。' }
-        Start-Sleep -Milliseconds 200
-      }
-    }
-
-    Get-ChildItem -LiteralPath $sourceExecutable.Directory.FullName -Force |
-      Copy-Item -Destination $TargetDirectory -Recurse -Force
-    if (-not (Test-Path -LiteralPath $targetExecutable)) {
-      throw '更新文件复制后未找到应用程序。'
-    }
-    Start-Process -FilePath $targetExecutable -WorkingDirectory $TargetDirectory
-    Write-UpdateLog '更新完成。'
-  } finally {
-    Remove-Item -LiteralPath $extractDirectory -Recurse -Force -ErrorAction SilentlyContinue
-  }
-}
-
-try {
-  if (-not $Elevated) {
-    try {
-      Invoke-Update
-    } catch {
-      $accessDenied = $_.Exception -is [UnauthorizedAccessException] `
-        -or $_.FullyQualifiedErrorId -like '*UnauthorizedAccess*'
-      if (-not $accessDenied) { throw }
-      Start-ElevatedUpdate
-      exit 0
-    }
-  } else {
-    Invoke-Update
-  }
-  Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
-} catch {
-  Write-UpdateLog ('更新失败：' + $_.Exception.Message)
-  exit 1
-}
-''';
-
-String _safeFileName(String value) {
-  final name = path.basename(value).replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-  return name.isEmpty ? 'event-atlas-update.bin' : name;
 }
 
 String _normalizeVersion(String value) {
@@ -437,8 +294,7 @@ bool _isNewerVersion(String candidate, String current) {
 }
 
 List<int> _versionParts(String value) {
-  final normalized = _normalizeVersion(value);
-  final parts = normalized.split('.').map(int.parse).toList();
+  final parts = _normalizeVersion(value).split('.').map(int.parse).toList();
   while (parts.length < 4) {
     parts.add(0);
   }

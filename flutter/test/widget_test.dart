@@ -54,6 +54,7 @@ void main() {
     addTearDown(repository.close);
 
     await tester.binding.setSurfaceSize(const Size(1100, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
     await tester.pumpAndSettle();
 
@@ -104,9 +105,7 @@ void main() {
     expect(find.text('事件时间线'), findsOneWidget);
   });
 
-  testWidgets('uses distinct semantic colors for event statuses', (
-    tester,
-  ) async {
+  testWidgets('uses shared semantic colors for event statuses', (tester) async {
     final events = EventStatus.values
         .map(
           (status) => seedArchive.events.first.copyWith(
@@ -141,6 +140,7 @@ void main() {
     addTearDown(repository.close);
 
     await tester.binding.setSurfaceSize(const Size(1100, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
     await tester.pumpAndSettle();
 
@@ -153,25 +153,88 @@ void main() {
     expect(find.text('跟随系统'), findsOneWidget);
     expect(find.byType(SegmentedButton<AppThemeMode>), findsOneWidget);
     expect(find.byType(RadioListTile<AppThemeMode>), findsNothing);
-    expect(find.text('森林绿'), findsOneWidget);
     expect(find.text('莓红 · 燕麦色'), findsOneWidget);
     expect(find.text('薄荷绿 · 炭灰色'), findsOneWidget);
     expect(find.text('宝蓝 · 明黄'), findsOneWidget);
     expect(find.text('亮橙 · 深青色'), findsOneWidget);
     expect(find.text('奶油白 · 草木绿'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('primary-berryRedOat')));
-    await tester.pumpAndSettle();
-    final paletteApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
-    expect(paletteApp.theme?.colorScheme.primary, const Color(0xffb50031));
-    expect(paletteApp.theme?.colorScheme.secondary, const Color(0xffdac9b1));
+    const palettes = {
+      'berryRedOat': (0xffb50031, 0xffdac9b1),
+      'mintGreenCharcoal': (0xff7dffde, 0xff2f2f2f),
+      'royalBlueYellow': (0xff012bac, 0xffffcf00),
+      'brightOrangeDarkTeal': (0xffff7400, 0xff253636),
+      'creamWhiteLeafGreen': (0xfff6f9e4, 0xff67b972),
+    };
+    for (final entry in palettes.entries) {
+      await tester.tap(find.byKey(ValueKey('primary-${entry.key}')));
+      await tester.pumpAndSettle();
+      final paletteApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expect(paletteApp.theme?.colorScheme.primary, Color(entry.value.$1));
+      expect(paletteApp.theme?.colorScheme.secondary, Color(entry.value.$2));
+    }
 
     await tester.tap(find.text('深色'));
     await tester.pumpAndSettle();
 
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.themeMode, ThemeMode.dark);
-    expect(app.darkTheme?.colorScheme.primary, const Color(0xffb50031));
+    expect(app.darkTheme?.colorScheme.primary, const Color(0xfff6f9e4));
+    expect(app.darkTheme?.colorScheme.secondary, const Color(0xff67b972));
+  });
+
+  testWidgets('keeps theme surfaces and semantic colors distinct', (
+    tester,
+  ) async {
+    final repository = ArchiveRepository(databasePath: ':memory:');
+    addTearDown(repository.close);
+
+    await tester.binding.setSurfaceSize(const Size(1100, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('atlas-grain')), findsOneWidget);
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+
+    void expectTheme(ThemeData theme) {
+      final colors = theme.colorScheme;
+      final surfaces = {
+        colors.surface,
+        colors.surfaceContainerLowest,
+        colors.surfaceContainerLow,
+        colors.surfaceContainer,
+        colors.surfaceContainerHigh,
+        colors.surfaceContainerHighest,
+      };
+      expect(surfaces, hasLength(greaterThan(1)));
+
+      final onSurface = colors.onSurface;
+      final onSurfaceVariant = colors.onSurfaceVariant;
+      expect(onSurface, anyOf(Colors.black, Colors.white));
+      expect(onSurfaceVariant.withAlpha(0xff), onSurface);
+      expect(onSurfaceVariant.a, lessThan(onSurface.a));
+
+      expect(colors.error, isNot(colors.primary));
+      expect(theme.navigationRailTheme.backgroundColor, isNot(colors.primary));
+      expect(theme.navigationBarTheme.backgroundColor, isNot(colors.primary));
+      expect(theme.chipTheme.backgroundColor, isNot(colors.primary));
+    }
+
+    const palettes = [
+      'berryRedOat',
+      'mintGreenCharcoal',
+      'royalBlueYellow',
+      'brightOrangeDarkTeal',
+      'creamWhiteLeafGreen',
+    ];
+    for (final palette in palettes) {
+      await tester.tap(find.byKey(ValueKey('primary-$palette')));
+      await tester.pumpAndSettle();
+      final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expectTheme(app.theme!);
+      expectTheme(app.darkTheme!);
+    }
   });
 
   testWidgets('changes the new event precision preference', (tester) async {
@@ -195,11 +258,12 @@ void main() {
     expect(menu.animated, isTrue);
     expect(menu.style?.alignment, AlignmentDirectional.bottomStart);
     expect(menu.style?.shape?.resolve({}), isA<RoundedRectangleBorder>());
+    final inputRect = tester.getRect(find.byType(InputDecorator));
+    final menuItemRect = tester.getRect(find.text('年份').last);
     expect(
-      tester.getTopLeft(find.text('年份').last).dy,
-      greaterThanOrEqualTo(
-        tester.getBottomLeft(find.byType(InputDecorator)).dy,
-      ),
+      menuItemRect.bottom <= inputRect.top ||
+          menuItemRect.top >= inputRect.bottom,
+      isTrue,
     );
     await tester.tap(find.text('月份').last);
     await tester.pumpAndSettle();

@@ -66,14 +66,7 @@ class AppDelegate: FlutterAppDelegate {
           includingResourceValuesForKeys: nil,
           relativeTo: nil
         )
-        guard url.startAccessingSecurityScopedResource() else {
-          result(FlutterError(
-            code: "sync_access_denied",
-            message: "无法获得同步目录访问权限。",
-            details: nil
-          ))
-          return
-        }
+        _ = url.startAccessingSecurityScopedResource()
         syncScopedURL?.stopAccessingSecurityScopedResource()
         syncScopedURL = url
         result(bookmark.base64EncodedString())
@@ -98,14 +91,7 @@ class AppDelegate: FlutterAppDelegate {
           relativeTo: nil,
           bookmarkDataIsStale: &isStale
         )
-        guard url.startAccessingSecurityScopedResource() else {
-          result(FlutterError(
-            code: "sync_access_denied",
-            message: "无法恢复同步目录访问权限。",
-            details: nil
-          ))
-          return
-        }
+        _ = url.startAccessingSecurityScopedResource()
         syncScopedURL?.stopAccessingSecurityScopedResource()
         syncScopedURL = url
         var refreshed = encoded

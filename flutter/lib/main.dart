@@ -16,68 +16,50 @@ import 'event_location.dart';
 import 'sync_models.dart';
 import 'sync_service.dart';
 
-abstract final class AtlasPalette {
-  static const paper = Color(0xfff7f7f1);
-  static const sidebar = Color(0xfff0f3ec);
-  static const card = Color(0xfffffefa);
-  static const ink = Color(0xff17211d);
-  static const muted = Color(0xff758078);
-  static const line = Color(0xffdfe5df);
-  static const green = Color(0xff185c45);
-  static const sage = Color(0xffdce7d6);
-  static const navigationSelected = Color(0xffc5dbc0);
-  static const interactiveHover = Color(0x1f185c45);
-  static const interactiveSplash = Color(0x33185c45);
-  static const accent = Color(0xffdd704c);
-  static const personSurface = Color(0xffe8ebff);
-  static const personOnSurface = Color(0xff45558f);
-  static const personTagSurface = Color(0xfff1e5f5);
-  static const personTagOnSurface = Color(0xff754c83);
-  static const eventTagSurface = Color(0xffe7ebef);
-  static const eventTagOnSurface = Color(0xff52606d);
-}
-
-bool _isDark(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark;
+Color _onPaletteColor(Color color) =>
+    color.computeLuminance() > 0.5 ? Colors.black : Colors.white;
 
 Color _detailSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff292d32) : const Color(0xfff1f4ef);
+    Theme.of(context).colorScheme.surface;
 
 Color _detailGroupSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff30353b) : const Color(0xfff9fbf7);
+    Theme.of(context).colorScheme.surfaceContainerHigh;
 
 Color _personSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff3d4673) : AtlasPalette.personSurface;
+    Theme.of(context).colorScheme.surfaceContainer;
 
 Color _personOnSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xffdfe3ff) : AtlasPalette.personOnSurface;
+    Theme.of(context).colorScheme.onSurface;
 
 Color _personTagSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff4f3a57) : AtlasPalette.personTagSurface;
+    Theme.of(context).colorScheme.surfaceContainerHigh;
 
-Color _personTagOnSurface(BuildContext context) => _isDark(context)
-    ? const Color(0xffefd8f5)
-    : AtlasPalette.personTagOnSurface;
+Color _personTagOnSurface(BuildContext context) =>
+    Theme.of(context).colorScheme.onSurface;
 
 Color _eventTagSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xff3a4048) : AtlasPalette.eventTagSurface;
+    Theme.of(context).colorScheme.surfaceContainerHigh;
 
 Color _eventTagOnSurface(BuildContext context) =>
-    _isDark(context) ? const Color(0xffd8dee6) : AtlasPalette.eventTagOnSurface;
+    Theme.of(context).colorScheme.onSurface;
 
-Color _eventStatusColor(EventStatus status) => switch (status) {
-  EventStatus.scheduled => const Color(0xffffedd2),
-  EventStatus.active => const Color(0xffdcecff),
-  EventStatus.completed => const Color(0xffdfe5ec),
-  EventStatus.cancelled => const Color(0xffffdfe3),
-};
+Color _eventStatusColor(BuildContext context, EventStatus status) =>
+    switch (status) {
+      EventStatus.scheduled => Theme.of(
+        context,
+      ).colorScheme.surfaceContainerHigh,
+      EventStatus.active => Theme.of(context).colorScheme.primary,
+      EventStatus.completed => Theme.of(context).colorScheme.surfaceContainer,
+      EventStatus.cancelled => Theme.of(context).colorScheme.error,
+    };
 
-Color _eventStatusTextColor(EventStatus status) => switch (status) {
-  EventStatus.scheduled => const Color(0xffa45a10),
-  EventStatus.active => const Color(0xff245b91),
-  EventStatus.completed => const Color(0xff4b5e70),
-  EventStatus.cancelled => const Color(0xffa63e4c),
-};
+Color _eventStatusTextColor(BuildContext context, EventStatus status) =>
+    switch (status) {
+      EventStatus.scheduled => Theme.of(context).colorScheme.onSurface,
+      EventStatus.active => Theme.of(context).colorScheme.onPrimary,
+      EventStatus.completed => Theme.of(context).colorScheme.onSurface,
+      EventStatus.cancelled => Theme.of(context).colorScheme.onError,
+    };
 
 String _formatLocalDate(DateTime date) =>
     '${date.year.toString().padLeft(4, '0')}-'
@@ -312,89 +294,102 @@ class _PersonEventAtlasAppState extends State<PersonEventAtlasApp> {
         AppThemeMode.dark => ThemeMode.dark,
       },
       home: _ready
-          ? ArchiveHome(
-              repository: _repository,
-              settings: _settings,
-              onSettingsChanged: _saveSettings,
-              onCheckForUpdates: _updateService.checkForUpdate,
-              onInstallUpdate: _updateService.downloadAndInstall,
+          ? _AtlasGrainFrame(
+              child: ArchiveHome(
+                repository: _repository,
+                settings: _settings,
+                onSettingsChanged: _saveSettings,
+                onCheckForUpdates: _updateService.checkForUpdate,
+                onInstallUpdate: _updateService.downloadAndInstall,
+              ),
             )
-          : const Scaffold(body: Center(child: Text('正在打开本地档案…'))),
+          : const _AtlasGrainFrame(
+              child: Scaffold(body: Center(child: Text('正在打开本地档案…'))),
+            ),
     );
   }
 }
 
 ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
-  final dark = brightness == Brightness.dark;
+  final primary = Color(primaryColor.value);
   final companion = Color(primaryColor.companionValue);
-  final paper = Color.lerp(
-    dark ? const Color(0xff0f1012) : AtlasPalette.paper,
-    companion,
-    dark ? 0.06 : 0.10,
-  )!;
-  final sidebar = Color.lerp(
-    dark ? const Color(0xff17191c) : AtlasPalette.sidebar,
-    companion,
-    dark ? 0.08 : 0.16,
-  )!;
-  final card = Color.lerp(
-    dark ? const Color(0xff222529) : AtlasPalette.card,
-    companion,
-    dark ? 0.04 : 0.06,
-  )!;
-  final ink = dark ? const Color(0xfff2f2f3) : AtlasPalette.ink;
-  final muted = Color.lerp(
-    dark ? const Color(0xffa6a9ae) : AtlasPalette.muted,
-    companion,
-    0.08,
-  )!;
-  final line = Color.lerp(
-    dark ? const Color(0xff3b3e43) : AtlasPalette.line,
-    companion,
-    0.18,
-  )!;
-  final primary = Color(dark ? primaryColor.darkValue : primaryColor.value);
-  final onPrimary = primary.computeLuminance() > 0.5
-      ? Colors.black
-      : Colors.white;
-  final onSecondary = companion.computeLuminance() > 0.5
-      ? Colors.black
-      : Colors.white;
-  final scheme = (dark ? ColorScheme.dark : ColorScheme.light)(
-    primary: primary,
-    onPrimary: onPrimary,
-    secondary: companion,
-    onSecondary: onSecondary,
-    surface: card,
-    onSurface: ink,
-    outline: line,
-  );
+  final canvas = brightness == Brightness.dark ? Colors.black : Colors.white;
+  final surface = Color.alphaBlend(companion.withAlpha(30), canvas);
+  final surfaceLow = Color.alphaBlend(companion.withAlpha(46), canvas);
+  final surfaceHigh = Color.alphaBlend(companion.withAlpha(68), canvas);
+  final surfaceHighest = Color.alphaBlend(companion.withAlpha(92), canvas);
+  final onPrimary = _onPaletteColor(primary);
+  final onCompanion = _onPaletteColor(companion);
+  final onSurface = brightness == Brightness.dark ? Colors.white : Colors.black;
+  final error = brightness == Brightness.dark ? Colors.white : Colors.black;
+  final scheme =
+      (brightness == Brightness.dark ? ColorScheme.dark : ColorScheme.light)(
+        primary: primary,
+        onPrimary: onPrimary,
+        primaryContainer: surfaceHigh,
+        onPrimaryContainer: onSurface,
+        secondary: companion,
+        onSecondary: onCompanion,
+        secondaryContainer: surfaceHighest,
+        onSecondaryContainer: onPrimary,
+        tertiary: companion,
+        onTertiary: onCompanion,
+        error: error,
+        onError: brightness == Brightness.dark ? Colors.black : Colors.white,
+        errorContainer: error,
+        onErrorContainer: brightness == Brightness.dark
+            ? Colors.black
+            : Colors.white,
+        surface: surface,
+        onSurface: onSurface,
+        surfaceDim: canvas,
+        surfaceBright: surfaceLow,
+        surfaceContainerLowest: canvas,
+        surfaceContainerLow: surfaceLow,
+        surfaceContainer: surfaceHigh,
+        surfaceContainerHigh: surfaceHighest,
+        surfaceContainerHighest: Color.alphaBlend(
+          companion.withAlpha(116),
+          canvas,
+        ),
+        onSurfaceVariant: onSurface.withAlpha(170),
+        outline: onSurface.withAlpha(120),
+        outlineVariant: surfaceHigh,
+        inverseSurface: onSurface,
+        onInverseSurface: onPrimary,
+        inversePrimary: surfaceHigh,
+        surfaceTint: Colors.transparent,
+        background: surface,
+        onBackground: onSurface,
+        surfaceVariant: surfaceLow,
+      );
   return ThemeData(
     brightness: brightness,
     useMaterial3: true,
-    scaffoldBackgroundColor: paper,
+    scaffoldBackgroundColor: surface,
     colorScheme: scheme,
     cardTheme: CardThemeData(
-      color: card,
+      color: surfaceLow,
       elevation: 0,
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
+      surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: const BorderRadius.all(Radius.circular(16)),
-        side: BorderSide(color: line),
+        side: BorderSide(color: scheme.outline),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: card,
+      fillColor: surfaceLow,
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       border: OutlineInputBorder(
         borderRadius: const BorderRadius.all(Radius.circular(12)),
-        borderSide: BorderSide(color: line),
+        borderSide: BorderSide(color: scheme.outline),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: const BorderRadius.all(Radius.circular(12)),
-        borderSide: BorderSide(color: line),
+        borderSide: BorderSide(color: scheme.outline),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: const BorderRadius.all(Radius.circular(12)),
@@ -402,39 +397,36 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
       ),
     ),
     navigationRailTheme: NavigationRailThemeData(
-      backgroundColor: sidebar,
-      selectedIconTheme: IconThemeData(color: primary),
+      backgroundColor: surface,
+      selectedIconTheme: IconThemeData(color: onSurface),
       selectedLabelTextStyle: TextStyle(
-        color: primary,
+        color: onSurface,
         fontWeight: FontWeight.w700,
       ),
-      indicatorColor: primary.withAlpha(dark ? 0x66 : 0x26),
+      indicatorColor: surfaceHigh,
       indicatorShape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(16)),
       ),
       useIndicator: true,
-      unselectedIconTheme: IconThemeData(color: muted),
-      unselectedLabelTextStyle: TextStyle(color: muted),
+      unselectedIconTheme: IconThemeData(color: onSurface.withAlpha(170)),
+      unselectedLabelTextStyle: TextStyle(color: onSurface.withAlpha(170)),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: sidebar,
+      backgroundColor: surface,
       surfaceTintColor: Colors.transparent,
-      indicatorColor: primary.withAlpha(dark ? 0x66 : 0x26),
+      indicatorColor: surfaceHigh,
       indicatorShape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(16)),
       ),
-      overlayColor: WidgetStatePropertyAll<Color?>(primary.withAlpha(0x1f)),
+      overlayColor: const WidgetStatePropertyAll<Color?>(Colors.transparent),
     ),
     chipTheme: ChipThemeData(
-      backgroundColor: dark ? const Color(0xff2c2f34) : const Color(0xffedf3ea),
+      backgroundColor: surfaceLow,
       side: BorderSide.none,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(8)),
       ),
-      labelStyle: TextStyle(
-        color: dark ? ink : const Color(0xff41614f),
-        fontSize: 11,
-      ),
+      labelStyle: TextStyle(color: onSurface, fontSize: 11),
       padding: const EdgeInsets.symmetric(horizontal: 4),
     ),
     listTileTheme: const ListTileThemeData(
@@ -454,24 +446,30 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: primary,
-        side: BorderSide(color: primary),
+        foregroundColor: onSurface,
+        side: BorderSide(color: scheme.outline),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
         ),
       ),
     ),
     dialogTheme: DialogThemeData(
+      backgroundColor: surfaceLow,
+      surfaceTintColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(20)),
       ),
     ),
-    popupMenuTheme: const PopupMenuThemeData(
+    popupMenuTheme: PopupMenuThemeData(
+      color: surfaceLow,
+      textStyle: TextStyle(color: onSurface),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(14)),
       ),
     ),
-    snackBarTheme: const SnackBarThemeData(
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: surfaceHigh,
+      contentTextStyle: TextStyle(color: onSurface),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(12)),
       ),
@@ -481,11 +479,71 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
         borderRadius: BorderRadius.all(Radius.circular(16)),
       ),
     ),
-    textTheme: (dark ? ThemeData.dark() : ThemeData.light()).textTheme.apply(
-      bodyColor: ink,
-      displayColor: ink,
-    ),
+    textTheme:
+        (brightness == Brightness.dark ? ThemeData.dark() : ThemeData.light())
+            .textTheme
+            .apply(bodyColor: onSurface, displayColor: onSurface),
   );
+}
+
+class _AtlasGrainFrame extends StatelessWidget {
+  const _AtlasGrainFrame({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final grainColor =
+        (brightness == Brightness.dark ? Colors.white : Colors.black).withAlpha(
+          10,
+        );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              key: const ValueKey('atlas-grain'),
+              painter: _AtlasGrainPainter(grainColor),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AtlasGrainPainter extends CustomPainter {
+  const _AtlasGrainPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    const cellSize = 22.0;
+    final columns = (size.width / cellSize).ceil();
+    final rows = (size.height / cellSize).ceil();
+    final paint = Paint()..color = color;
+    // ponytail: fixed grid keeps painting cheap; use a texture asset only if this repeats visibly.
+    for (var row = 0; row < rows; row++) {
+      for (var column = 0; column < columns; column++) {
+        final index = row * columns + column;
+        final x = column * cellSize + (index * 17) % 19 + 1;
+        final y = row * cellSize + (index * 29) % 19 + 1;
+        canvas.drawRect(
+          Rect.fromLTWH(x, y, index.isEven ? 1.0 : 0.7, 1.0),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AtlasGrainPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 enum ArchiveView { timeline, people, tags, settings }
@@ -663,7 +721,8 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     final directory = widget.settings.syncDirectory;
     if (!widget.settings.syncEnabled ||
         directory == null ||
-        directory.isEmpty) {
+        directory.isEmpty ||
+        (Platform.isMacOS && widget.settings.syncDirectoryBookmark == null)) {
       return;
     }
     if (_syncBusy) return;
@@ -1504,23 +1563,35 @@ class _ArchiveHomeState extends State<ArchiveHome> {
 class _Brand extends StatelessWidget {
   const _Brand();
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Image.asset('assets/logo.png', width: 34, height: 34),
-      ),
-      const SizedBox(width: 10),
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Thing', style: TextStyle(fontWeight: FontWeight.w700)),
-          Text('THING · ARCHIVE', style: TextStyle(fontSize: 9)),
-        ],
-      ),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.asset('assets/logo.png', width: 34, height: 34),
+        ),
+        const SizedBox(width: 10),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Thing',
+              style: TextStyle(
+                color: colors.onSurface,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            Text(
+              'THING · ARCHIVE',
+              style: TextStyle(color: colors.onSurfaceVariant, fontSize: 9),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 class _DesktopSidebar extends StatelessWidget {
@@ -1580,14 +1651,14 @@ class _DesktopSidebar extends StatelessWidget {
                     onPressed: () => onChanged(ArchiveView.settings),
                   ),
                   const SizedBox(height: 12),
-                  Divider(color: colors.outline),
+                  Divider(color: colors.outlineVariant),
                   const SizedBox(height: 14),
                   Text(
                     '你的资料只保存在此设备。\n设置页可管理备份与偏好。',
                     style: TextStyle(
                       fontSize: 12,
                       height: 1.6,
-                      color: colors.onSurfaceVariant,
+                      color: colors.onSurface,
                     ),
                   ),
                 ],
@@ -1612,17 +1683,15 @@ class _SidebarSettingsButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final selectedColor = colors.primary.withAlpha(
-      Theme.of(context).brightness == Brightness.dark ? 0x66 : 0x26,
-    );
+    final selectedColor = colors.surfaceContainerHigh;
     return Material(
       color: selected ? selectedColor : Colors.transparent,
       borderRadius: const BorderRadius.all(Radius.circular(12)),
       child: InkWell(
         onTap: onPressed,
         borderRadius: const BorderRadius.all(Radius.circular(12)),
-        hoverColor: colors.primary.withAlpha(0x1f),
-        splashColor: colors.primary.withAlpha(0x33),
+        hoverColor: Colors.transparent,
+        splashColor: Colors.transparent,
         child: SizedBox(
           height: 56,
           child: Padding(
@@ -1631,13 +1700,15 @@ class _SidebarSettingsButton extends StatelessWidget {
               children: [
                 Icon(
                   selected ? Icons.settings : Icons.settings_outlined,
-                  color: selected ? colors.primary : colors.onSurfaceVariant,
+                  color: selected ? colors.onSurface : colors.onSurfaceVariant,
                 ),
                 const SizedBox(width: 12),
                 Text(
                   '设置',
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: selected ? colors.primary : colors.onSurfaceVariant,
+                    color: selected
+                        ? colors.onSurface
+                        : colors.onSurfaceVariant,
                     fontWeight: selected ? FontWeight.w700 : null,
                   ),
                 ),
@@ -1665,7 +1736,7 @@ class _Header extends StatelessWidget {
               Text(
                 'THING · ARCHIVE',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.primary,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.4,
                 ),
@@ -1814,11 +1885,11 @@ class FilterBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: value == null
             ? Theme.of(context).colorScheme.surface
-            : Theme.of(context).colorScheme.primary.withAlpha(0x22),
+            : Theme.of(context).colorScheme.surfaceContainerHigh,
         border: Border.all(
           color: value == null
               ? Theme.of(context).colorScheme.outline
-              : Theme.of(context).colorScheme.primary,
+              : Theme.of(context).colorScheme.outline,
         ),
         borderRadius: const BorderRadius.all(Radius.circular(12)),
       ),
@@ -1980,12 +2051,8 @@ class ReminderPanel extends StatelessWidget {
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 mouseCursor: SystemMouseCursors.click,
-                hoverColor: Theme.of(
-                  context,
-                ).colorScheme.primary.withAlpha(0x1f),
-                splashColor: Theme.of(
-                  context,
-                ).colorScheme.primary.withAlpha(0x33),
+                hoverColor: Colors.transparent,
+                splashColor: Colors.transparent,
                 onTap: () => onOpen(event.id),
                 title: Text(event.title),
                 subtitle: Text(
@@ -2118,8 +2185,8 @@ class EventCard extends StatelessWidget {
     child: InkWell(
       borderRadius: BorderRadius.circular(16),
       mouseCursor: onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
-      hoverColor: Theme.of(context).colorScheme.primary.withAlpha(0x1f),
-      splashColor: Theme.of(context).colorScheme.primary.withAlpha(0x33),
+      hoverColor: Colors.transparent,
+      splashColor: Colors.transparent,
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -2163,12 +2230,15 @@ class EventCard extends StatelessWidget {
                     runSpacing: 6,
                     children: [
                       Chip(
-                        backgroundColor: _eventStatusColor(event.status),
+                        backgroundColor: _eventStatusColor(
+                          context,
+                          event.status,
+                        ),
                         label: Text(
                           event.status.label,
                           style: TextStyle(
                             fontSize: 11,
-                            color: _eventStatusTextColor(event.status),
+                            color: _eventStatusTextColor(context, event.status),
                           ),
                         ),
                       ),
@@ -2273,12 +2343,8 @@ class PeopleList extends StatelessWidget {
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
                       mouseCursor: SystemMouseCursors.click,
-                      hoverColor: Theme.of(
-                        context,
-                      ).colorScheme.primary.withAlpha(0x1f),
-                      splashColor: Theme.of(
-                        context,
-                      ).colorScheme.primary.withAlpha(0x33),
+                      hoverColor: Colors.transparent,
+                      splashColor: Colors.transparent,
                       onTap: () => onOpen(person.id),
                       child: Padding(
                         padding: const EdgeInsets.all(14),
@@ -2508,7 +2574,7 @@ class ArchiveDetail extends StatelessWidget {
       child: Material(
         color: _detailGroupSurface(context),
         shape: RoundedRectangleBorder(
-          side: BorderSide(color: colors.outline.withAlpha(0x80)),
+          side: BorderSide(color: colors.outline),
           borderRadius: const BorderRadius.all(Radius.circular(14)),
         ),
         clipBehavior: Clip.antiAlias,
@@ -2732,11 +2798,11 @@ class ArchiveDetail extends StatelessWidget {
               const SizedBox(height: 24),
               if (event != null) ...[
                 Chip(
-                  backgroundColor: _eventStatusColor(event!.status),
+                  backgroundColor: _eventStatusColor(context, event!.status),
                   label: Text(
                     event!.status.label,
                     style: TextStyle(
-                      color: _eventStatusTextColor(event!.status),
+                      color: _eventStatusTextColor(context, event!.status),
                     ),
                   ),
                 ),
@@ -2776,8 +2842,8 @@ class ArchiveDetail extends StatelessWidget {
                           (link) => ListTile(
                             contentPadding: EdgeInsets.zero,
                             mouseCursor: SystemMouseCursors.click,
-                            hoverColor: colors.primary.withAlpha(0x1f),
-                            splashColor: colors.primary.withAlpha(0x33),
+                            hoverColor: Colors.transparent,
+                            splashColor: Colors.transparent,
                             onTap: () => onPerson(link.personId),
                             leading: CircleAvatar(
                               radius: 14,
@@ -2809,8 +2875,8 @@ class ArchiveDetail extends StatelessWidget {
                           mouseCursor: previous == null
                               ? SystemMouseCursors.basic
                               : SystemMouseCursors.click,
-                          hoverColor: colors.primary.withAlpha(0x1f),
-                          splashColor: colors.primary.withAlpha(0x33),
+                          hoverColor: Colors.transparent,
+                          splashColor: Colors.transparent,
                           onTap: previous == null ? null : () => onEvent(id),
                           title: Text(previous?.title ?? '未知事件'),
                           subtitle: Text(previous?.dateLabel ?? '关联资料缺失'),
@@ -2861,8 +2927,8 @@ class ArchiveDetail extends StatelessWidget {
                                 (item) => ListTile(
                                   contentPadding: EdgeInsets.zero,
                                   mouseCursor: SystemMouseCursors.click,
-                                  hoverColor: colors.primary.withAlpha(0x1f),
-                                  splashColor: colors.primary.withAlpha(0x33),
+                                  hoverColor: Colors.transparent,
+                                  splashColor: Colors.transparent,
                                   onTap: () => onEvent(item.id),
                                   title: Text(item.title),
                                   subtitle: Text(item.dateLabel),
@@ -2893,7 +2959,7 @@ class DetailSection extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       decoration: BoxDecoration(
         color: _detailGroupSurface(context),
-        border: Border.all(color: colors.outline.withAlpha(0x80)),
+        border: Border.all(color: colors.outline),
         borderRadius: const BorderRadius.all(Radius.circular(14)),
       ),
       child: Column(
@@ -3197,7 +3263,11 @@ class SettingsPage extends StatelessWidget {
                 label: Text(directory == null ? '选择同步目录' : '更换目录'),
               ),
               FilledButton.icon(
-                onPressed: settings.syncEnabled && directory != null
+                onPressed:
+                    settings.syncEnabled &&
+                        directory != null &&
+                        (!Platform.isMacOS ||
+                            settings.syncDirectoryBookmark != null)
                     ? syncNow
                     : null,
                 icon: const Icon(Icons.sync),
@@ -3346,8 +3416,8 @@ class SettingsPage extends StatelessWidget {
                 ),
                 selectedColor: Theme.of(
                   context,
-                ).colorScheme.primary.withAlpha(0x30),
-                checkmarkColor: Theme.of(context).colorScheme.primary,
+                ).colorScheme.surfaceContainerHigh,
+                checkmarkColor: Theme.of(context).colorScheme.onSurface,
                 selected: settings.primaryColor == color,
                 onSelected: (_) =>
                     _change(settings.copyWith(primaryColor: color)),
@@ -4041,7 +4111,7 @@ class _CustomTagsPageState extends State<CustomTagsPage> {
                                       Text(
                                         '${counts[tag] ?? 0} 个$label',
                                         style: TextStyle(
-                                          color: tagOnSurface.withAlpha(0xcc),
+                                          color: tagOnSurface,
                                           fontSize: 11,
                                         ),
                                       ),
@@ -4187,7 +4257,7 @@ class _PersonEditorState extends State<PersonEditor> {
             children: _availableTags.map((tag) {
               final selected = _split(_tags.text).contains(tag);
               return FilterChip(
-                backgroundColor: _personTagSurface(context).withAlpha(0x70),
+                backgroundColor: _personTagSurface(context),
                 selectedColor: _personTagSurface(context),
                 checkmarkColor: _personTagOnSurface(context),
                 labelStyle: TextStyle(
@@ -4547,9 +4617,7 @@ class _EventEditorState extends State<EventEditor> {
                   borderRadius: BorderRadius.all(Radius.circular(12)),
                 ),
                 mouseCursor: SystemMouseCursors.click,
-                hoverColor: Theme.of(
-                  context,
-                ).colorScheme.primary.withAlpha(0x1f),
+                hoverColor: Colors.transparent,
                 value: _previousEventIds.contains(event.id),
                 title: Text(event.title),
                 subtitle: Text(event.dateLabel),
@@ -4577,7 +4645,7 @@ class _EventEditorState extends State<EventEditor> {
             children: _availableTags.map((tag) {
               final selected = _split(_tags.text).contains(tag);
               return FilterChip(
-                backgroundColor: _eventTagSurface(context).withAlpha(0x70),
+                backgroundColor: _eventTagSurface(context),
                 selectedColor: _eventTagSurface(context),
                 checkmarkColor: _eventTagOnSurface(context),
                 labelStyle: TextStyle(
@@ -4633,8 +4701,8 @@ class _EventEditorState extends State<EventEditor> {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
         decoration: BoxDecoration(
-          color: colors.primary.withAlpha(0x24),
-          border: Border.all(color: colors.primary.withAlpha(0x52)),
+          color: colors.surfaceContainerHigh,
+          border: Border.all(color: colors.outline),
           borderRadius: const BorderRadius.all(Radius.circular(10)),
         ),
         child: Row(

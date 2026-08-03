@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub Release tag to receive the Windows ZIP
+        description: Existing GitHub Release tag to receive Windows assets
         required: true
         type: string
 
@@ -66,16 +66,42 @@ jobs:
         run: flutter pub get
 
       - name: Build Windows release
-        run: flutter build windows --release
+        shell: pwsh
+        run: |
+          $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
+          $appVersion, $appBuild = $version -split '\+', 2
+          flutter build windows --release "--dart-define=APP_VERSION=$appVersion" "--dart-define=APP_BUILD=$appBuild"
+
+      - name: Validate Windows release output
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $PWD 'build/windows/x64/runner/Release'
+          $appPath = Join-Path $releaseDir 'Thing.exe'
+          if (-not (Test-Path -LiteralPath $releaseDir -PathType Container)) {
+            throw "Windows release directory was not found: $releaseDir"
+          }
+          if (-not (Test-Path -LiteralPath $appPath -PathType Leaf)) {
+            throw "Windows executable was not found: $appPath"
+          }
 
       - name: Package Windows release
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         shell: pwsh
-        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath build/Thing-windows-${{ github.sha }}.zip
+        run: |
+          $zipPath = Join-Path $PWD 'build/Thing-windows-${{ github.sha }}.zip'
+          Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath $zipPath
+          if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
+            throw "Windows ZIP was not created: $zipPath"
+          }
+          if ([IO.Path]::GetFileName($zipPath) -ne 'Thing-windows-${{ github.sha }}.zip') {
+            throw "Windows ZIP has an unexpected name: $zipPath"
+          }
 
       - name: Build Windows installer
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) {
@@ -83,7 +109,7 @@ jobs:
             $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           }
           if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler was not found.' }
-          $releaseTag = '${{ inputs.release_tag }}'
+          $releaseTag = $env:RELEASE_TAG
           if ($releaseTag) {
             $version = $releaseTag -replace '^v', ''
           } else {
@@ -91,6 +117,10 @@ jobs:
           }
           & $iscc "/DAppVersion=$version" windows/installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installerPath = Join-Path $PWD "build/installer/Thing-windows-v$version-setup.exe"
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+            throw "Windows installer was not created with the expected name: $installerPath"
+          }
 
       - name: Upload Windows release artifact
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
@@ -116,17 +146,99 @@ jobs:
           name: Thing-windows-${{ github.sha }}
           path: release
 
-      - name: Rename Windows package for Release
-        run: mv "release/Thing-windows-${{ github.sha }}.zip" "release/Thing-windows-${{ inputs.release_tag }}.zip"
+      - name: Verify target GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Release tag must look like v1.2.3: $RELEASE_TAG" >&2
+            exit 1
+          }
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName'
+          ref_json=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")
+          ref_type=$(jq -r '.object.type' <<<"$ref_json")
+          ref_sha=$(jq -r '.object.sha' <<<"$ref_json")
+          if [[ "$ref_type" == "tag" ]]; then
+            ref_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$ref_sha" --jq '.object.sha')
+          fi
+          [[ "$ref_sha" == "$GITHUB_SHA" ]] || {
+            echo "Release tag $RELEASE_TAG points to $ref_sha, expected $GITHUB_SHA" >&2
+            exit 1
+          }
+
+      - name: Validate and prepare Windows release assets
+        id: prepare-release-assets
+        env:
+          BUILD_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_zip="release/Thing-windows-${BUILD_SHA}.zip"
+          release_zip="release/Thing-windows-${RELEASE_TAG}.zip"
+          installer_matches=(release/installer/Thing-windows-v*-setup.exe)
+
+          [[ -f "$source_zip" ]] || { echo "Missing downloaded Windows ZIP: $source_zip" >&2; exit 1; }
+          [[ ${#installer_matches[@]} -eq 1 && -f "${installer_matches[0]}" ]] || {
+            echo "Expected exactly one downloaded Windows installer under release/installer" >&2
+            printf 'Found: %s\n' "${installer_matches[@]}" >&2
+            exit 1
+          }
+          installer_path="${installer_matches[0]}"
+          installer_name="$(basename "$installer_path")"
+          expected_installer="Thing-windows-v${RELEASE_TAG#v}-setup.exe"
+          [[ "$installer_name" == "$expected_installer" ]] || {
+            echo "Installer does not match release tag: expected $expected_installer, found $installer_name" >&2
+            exit 1
+          }
+          [[ "$installer_name" =~ ^Thing-windows-v[0-9]+\.[0-9]+\.[0-9]+-setup\.exe$ ]] || {
+            echo "Unexpected Windows installer name: $installer_name" >&2
+            exit 1
+          }
+
+          mv -- "$source_zip" "$release_zip"
+          mv -- "$installer_path" "release/$installer_name"
+          [[ -f "$release_zip" ]] || { echo "Renamed Windows ZIP is missing: $release_zip" >&2; exit 1; }
+          [[ -f "release/$installer_name" ]] || { echo "Prepared Windows installer is missing: release/$installer_name" >&2; exit 1; }
+          echo "installer_name=$installer_name" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Windows release assets before upload
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          INSTALLER_NAME: ${{ steps.prepare-release-assets.outputs.installer_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_zip="release/Thing-windows-${RELEASE_TAG}.zip"
+          installer_matches=(release/Thing-windows-v*-setup.exe)
+          [[ -f "$release_zip" ]] || { echo "Windows ZIP to upload is missing: $release_zip" >&2; exit 1; }
+          [[ ${#installer_matches[@]} -eq 1 && -f "${installer_matches[0]}" ]] || {
+            echo "Expected exactly one Windows installer to upload" >&2
+            exit 1
+          }
+          installer_name="$INSTALLER_NAME"
+          [[ -f "release/$installer_name" ]] || {
+            echo "Windows installer to upload is missing: release/$installer_name" >&2
+            exit 1
+          }
+          [[ "$installer_name" =~ ^Thing-windows-v[0-9]+\.[0-9]+\.[0-9]+-setup\.exe$ ]] || {
+            echo "Windows installer to upload has an unexpected name: $installer_name" >&2
+            exit 1
+          }
 
       - name: Upload Windows package to Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" "release/Thing-windows-${{ inputs.release_tag }}.zip" --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$RELEASE_TAG" "release/Thing-windows-$RELEASE_TAG.zip" --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Upload Windows installer to Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" release/installer/Thing-windows-*-setup.exe --repo "$GITHUB_REPOSITORY" --clobber
+          INSTALLER_NAME: ${{ steps.prepare-release-assets.outputs.installer_name }}
+        run: gh release upload "$RELEASE_TAG" "release/$INSTALLER_NAME" --repo "$GITHUB_REPOSITORY" --clobber
