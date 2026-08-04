@@ -112,11 +112,11 @@ void main() {
     expect(find.text('跟随系统'), findsOneWidget);
     expect(find.byType(SegmentedButton<AppThemeMode>), findsOneWidget);
     expect(find.byType(RadioListTile<AppThemeMode>), findsNothing);
-    expect(find.text('莓红 · 燕麦'), findsOneWidget);
-    expect(find.text('薄荷 · 炭灰'), findsOneWidget);
+    expect(find.text('莓红 · 燕麦色'), findsOneWidget);
     expect(find.text('宝蓝 · 明黄'), findsOneWidget);
-    expect(find.text('亮橙 · 深青'), findsOneWidget);
-    expect(find.text('草木 · 奶油'), findsOneWidget);
+    expect(find.text('薄荷 · 炭灰'), findsNothing);
+    expect(find.text('亮橙 · 深青'), findsNothing);
+    expect(find.text('草木 · 奶油'), findsNothing);
     expect(find.text('彩色阴影'), findsOneWidget);
 
     await tester.tap(find.text('深色'));
