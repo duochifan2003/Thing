@@ -35,7 +35,7 @@ extension AppPrimaryColorLabel on AppPrimaryColor {
   };
 
   int get companionValue => switch (this) {
-    AppPrimaryColor.berryRedOat => 0xffdac9b1,
+    AppPrimaryColor.berryRedOat => 0xffe0d1bd,
     AppPrimaryColor.royalBlueYellow => 0xffffcf00,
   };
 }
