@@ -352,7 +352,7 @@ ThemeData _atlasTheme(
   final onPrimary = _contrastText(primary);
   final error = dark ? const Color(0xffff6b81) : const Color(0xffb50031);
   final onError = _contrastText(error);
-  final shadow = colorShadows ? primary.withAlpha(0x99) : Colors.transparent;
+  final shadow = colorShadows ? primary : Colors.transparent;
   final scheme = (dark ? ColorScheme.dark : ColorScheme.light)(
     primary: primary,
     onPrimary: onPrimary,
@@ -466,7 +466,10 @@ ThemeData _atlasTheme(
         borderRadius: BorderRadius.all(Radius.circular(20)),
       ),
     ),
-    popupMenuTheme: const PopupMenuThemeData(
+    popupMenuTheme: PopupMenuThemeData(
+      elevation: colorShadows ? 6 : 0,
+      shadowColor: shadow,
+      surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(14)),
       ),
@@ -500,6 +503,42 @@ ThemeData _atlasTheme(
         TargetPlatform.macOS: _AtlasPageTransitionsBuilder(),
         TargetPlatform.windows: _AtlasPageTransitionsBuilder(),
       },
+    ),
+  );
+}
+
+Widget _atlasCard(
+  BuildContext context, {
+  required Widget child,
+  EdgeInsetsGeometry? margin,
+  Color? color,
+}) {
+  final theme = Theme.of(context);
+  final shape =
+      theme.cardTheme.shape ??
+      const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+      );
+  final shadows = theme.shadowColor == Colors.transparent
+      ? const <BoxShadow>[]
+      : [
+          BoxShadow(
+            color: theme.shadowColor,
+            offset: const Offset(4, 4),
+            blurRadius: 0,
+          ),
+        ];
+  return Container(
+    margin: margin,
+    decoration: ShapeDecoration(shape: shape, shadows: shadows),
+    child: Card(
+      color: color,
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      child: child,
     ),
   );
 }
@@ -1862,7 +1901,8 @@ class ReminderPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     if (events.isEmpty) return const SizedBox.shrink();
     final today = _formatLocalDate(DateTime.now());
-    return Card(
+    return _atlasCard(
+      context,
       margin: const EdgeInsets.fromLTRB(20, 0, 20, 12),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -1975,7 +2015,8 @@ class TimelineList extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: Card(
+                child: _atlasCard(
+                  context,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(16),
                     mouseCursor: SystemMouseCursors.click,
@@ -2168,9 +2209,9 @@ class PeopleList extends StatelessWidget {
                 return SizedBox(
                   width: cardWidth,
                   height: 144,
-                  child: Card(
+                  child: _atlasCard(
+                    context,
                     margin: EdgeInsets.zero,
-                    clipBehavior: Clip.antiAlias,
                     child: InkWell(
                       mouseCursor: SystemMouseCursors.click,
                       hoverColor: Theme.of(
@@ -2358,6 +2399,9 @@ class ArchiveDetail extends StatelessWidget {
                     ),
                     surfaceTintColor: const WidgetStatePropertyAll(
                       Colors.transparent,
+                    ),
+                    shadowColor: WidgetStatePropertyAll(
+                      Theme.of(context).shadowColor,
                     ),
                     elevation: const WidgetStatePropertyAll(6),
                     padding: const WidgetStatePropertyAll(EdgeInsets.zero),
@@ -2986,6 +3030,7 @@ class _AtlasDropdownState<T> extends State<_AtlasDropdown<T>> {
         alignment: AlignmentDirectional.bottomStart,
         backgroundColor: WidgetStatePropertyAll(colors.surface),
         surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        shadowColor: WidgetStatePropertyAll(Theme.of(context).shadowColor),
         elevation: const WidgetStatePropertyAll(6),
         padding: const WidgetStatePropertyAll(EdgeInsets.zero),
         minimumSize: width == null
@@ -3424,7 +3469,8 @@ class SettingsPage extends StatelessWidget {
     BuildContext context, {
     required String title,
     required Widget child,
-  }) => Card(
+  }) => _atlasCard(
+    context,
     margin: const EdgeInsets.only(bottom: 16),
     child: Padding(
       padding: const EdgeInsets.all(18),
@@ -3521,7 +3567,8 @@ class _AppUpdatePanelState extends State<AppUpdatePanel> {
   }
 
   @override
-  Widget build(BuildContext context) => Card(
+  Widget build(BuildContext context) => _atlasCard(
+    context,
     margin: const EdgeInsets.only(bottom: 16),
     child: Padding(
       padding: const EdgeInsets.all(18),
@@ -3899,7 +3946,8 @@ class _CustomTagsPageState extends State<CustomTagsPage> {
     final tagOnSurface = type == EntityType.person
         ? _personTagOnSurface(context)
         : _eventTagOnSurface(context);
-    return Card(
+    return _atlasCard(
+      context,
       margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -3973,9 +4021,9 @@ class _CustomTagsPageState extends State<CustomTagsPage> {
                     .map(
                       (tag) => SizedBox(
                         width: 150,
-                        child: Card(
+                        child: _atlasCard(
+                          context,
                           color: tagSurface,
-                          surfaceTintColor: Colors.transparent,
                           margin: EdgeInsets.zero,
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(10, 6, 2, 6),

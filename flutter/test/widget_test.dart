@@ -125,6 +125,8 @@ void main() {
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.themeMode, ThemeMode.dark);
     expect(app.darkTheme?.colorScheme.primary, const Color(0xffb50031));
+    expect(app.theme?.shadowColor, const Color(0xffb50031));
+    expect(app.theme?.cardTheme.shadowColor, const Color(0xffb50031));
   });
 
   testWidgets('changes the new event precision preference', (tester) async {
