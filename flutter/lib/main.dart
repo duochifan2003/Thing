@@ -514,11 +514,13 @@ Widget _atlasCard(
   Color? color,
 }) {
   final theme = Theme.of(context);
-  final shape =
-      theme.cardTheme.shape ??
-      const RoundedRectangleBorder(
-        borderRadius: BorderRadius.all(Radius.circular(16)),
-      );
+  final cardShape = theme.cardTheme.shape;
+  final shadowShape = cardShape is RoundedRectangleBorder
+      ? cardShape.copyWith(side: BorderSide.none)
+      : cardShape ??
+            const RoundedRectangleBorder(
+              borderRadius: BorderRadius.all(Radius.circular(16)),
+            );
   final shadows = theme.shadowColor == Colors.transparent
       ? const <BoxShadow>[]
       : [
@@ -530,7 +532,7 @@ Widget _atlasCard(
         ];
   return Container(
     margin: margin,
-    decoration: ShapeDecoration(shape: shape, shadows: shadows),
+    decoration: ShapeDecoration(shape: shadowShape, shadows: shadows),
     child: Card(
       color: color,
       margin: EdgeInsets.zero,

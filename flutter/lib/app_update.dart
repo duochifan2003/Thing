@@ -6,9 +6,9 @@ import 'package:path/path.dart' as path;
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.24',
+  defaultValue: '0.1.25',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '47');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '48');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
