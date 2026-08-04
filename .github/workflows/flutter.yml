@@ -65,13 +65,58 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Validate application version
+        id: app_version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $match = Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)\s*$'
+          if ($null -eq $match -or $match.Matches.Count -ne 1) {
+            throw 'pubspec.yaml must contain exactly one version in x.y.z+build form.'
+          }
+          $version = $match.Matches[0].Groups[1].Value
+          $build = $match.Matches[0].Groups[2].Value
+          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -ne "v$version") {
+            throw "Release tag $($env:RELEASE_TAG) does not match pubspec version v$version."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "build=$build" >> $env:GITHUB_OUTPUT
+
       - name: Build Windows release
-        run: flutter build windows --release
+        run: flutter build windows --release --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} --dart-define=APP_BUILD=${{ steps.app_version.outputs.build }}
+
+      - name: Validate Windows release output
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $PWD 'build/windows/x64/runner/Release'
+          $appPath = Join-Path $releaseDir 'Thing.exe'
+          if (-not (Test-Path -LiteralPath $releaseDir -PathType Container)) {
+            throw "Windows release directory was not found: $releaseDir"
+          }
+          if (-not (Test-Path -LiteralPath $appPath -PathType Leaf)) {
+            throw "Windows executable was not found: $appPath"
+          }
 
       - name: Package Windows release
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         shell: pwsh
-        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath build/Thing-windows-${{ github.sha }}.zip
+        run: |
+          $zipPath = Join-Path $PWD 'build/Thing-windows-${{ github.sha }}.zip'
+          Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath $zipPath
+          if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
+            throw "Windows ZIP was not created: $zipPath"
+          }
+          $validationDirectory = Join-Path $env:RUNNER_TEMP 'thing-windows-zip-validation'
+          try {
+            New-Item -Path $validationDirectory -ItemType Directory -Force | Out-Null
+            Expand-Archive -LiteralPath $zipPath -DestinationPath $validationDirectory -Force
+            if (-not (Test-Path -LiteralPath (Join-Path $validationDirectory 'Thing.exe') -PathType Leaf)) {
+              throw 'Windows ZIP does not contain Thing.exe at its root.'
+            }
+          } finally {
+            Remove-Item -LiteralPath $validationDirectory -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Upload Windows release artifact
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
@@ -95,11 +140,51 @@ jobs:
           name: Thing-windows-${{ github.sha }}
           path: release
 
-      - name: Rename Windows package for Release
-        run: mv "release/Thing-windows-${{ github.sha }}.zip" "release/Thing-windows-${{ inputs.release_tag }}.zip"
+      - name: Verify target GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Release tag must look like v1.2.3: $RELEASE_TAG" >&2
+            exit 1
+          }
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName'
+
+      - name: Validate and prepare Windows release asset
+        env:
+          BUILD_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_zip="release/Thing-windows-${BUILD_SHA}.zip"
+          release_zip="release/Thing-windows-${RELEASE_TAG}.zip"
+          [[ -f "$source_zip" ]] || { echo "Missing downloaded Windows ZIP: $source_zip" >&2; exit 1; }
+          [[ "$(basename "$source_zip")" == "Thing-windows-${BUILD_SHA}.zip" ]] || {
+            echo "Unexpected downloaded Windows ZIP name: $source_zip" >&2
+            exit 1
+          }
+          mv -- "$source_zip" "$release_zip"
+          [[ -f "$release_zip" ]] || { echo "Renamed Windows ZIP is missing: $release_zip" >&2; exit 1; }
+
+      - name: Validate Windows release asset before upload
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_zip="release/Thing-windows-${RELEASE_TAG}.zip"
+          [[ -f "$release_zip" ]] || { echo "Windows ZIP to upload is missing: $release_zip" >&2; exit 1; }
+          [[ "$(basename "$release_zip")" == "Thing-windows-${RELEASE_TAG}.zip" ]] || {
+            echo "Windows ZIP to upload has an unexpected name: $release_zip" >&2
+            exit 1
+          }
 
       - name: Upload Windows package to Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" "release/Thing-windows-${{ inputs.release_tag }}.zip" --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$RELEASE_TAG" "release/Thing-windows-$RELEASE_TAG.zip" --repo "$GITHUB_REPOSITORY" --clobber

@@ -149,17 +149,45 @@ class AppUpdateService {
     }
 
     final temporary = await io.Directory.systemTemp.createTemp('thing-update-');
-    final archive = io.File(
-      path.join(temporary.path, _safeFileName(asset.name)),
-    );
-    await _download(asset.downloadUrl, archive, onProgress);
+    try {
+      final archive = io.File(
+        path.join(temporary.path, _safeFileName(asset.name)),
+      );
+      await _download(asset.downloadUrl, archive, onProgress);
 
-    if (operatingSystem == 'macos') {
-      await _launchMacInstaller(temporary, archive);
-    } else {
-      await _launchWindowsInstaller(temporary, archive);
+      if (operatingSystem == 'macos') {
+        await _launchMacInstaller(temporary, archive);
+      } else {
+        final installerStarted = io.File(
+          path.join(temporary.path, 'installer-started'),
+        );
+        await _launchWindowsInstaller(temporary, archive, installerStarted);
+        await _waitForInstallerStart(installerStarted);
+      }
+      _exitApp(0);
+    } catch (_) {
+      await _deleteTemporaryDirectory(temporary);
+      rethrow;
     }
-    _exitApp(0);
+  }
+
+  Future<void> _deleteTemporaryDirectory(io.Directory directory) async {
+    try {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    } on io.FileSystemException {
+      // A detached updater may still be releasing a file handle. Its own
+      // cleanup path will retry after the process exits.
+    }
+  }
+
+  Future<void> _waitForInstallerStart(io.File marker) async {
+    for (var attempt = 0; attempt < 100; attempt++) {
+      if (await marker.exists()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw AppUpdateException(
+      '更新安装器未启动，应用保持打开。请查看 ${path.dirname(marker.path)} 中的安装日志。',
+    );
   }
 
   Future<String> _fetchLatestRelease(Uri uri) async {
@@ -269,42 +297,18 @@ open "\$TARGET_APP"
   Future<void> _launchWindowsInstaller(
     io.Directory temporary,
     io.File archive,
+    io.File installerStarted,
   ) async {
     final executable = io.Platform.resolvedExecutable;
     final targetDirectory = path.dirname(executable);
     final executableName = path.basename(executable);
     final script = io.File(path.join(temporary.path, 'install-update.ps1'));
-    await script.writeAsString(r'''
-param(
-  [int]$ProcessId,
-  [string]$Archive,
-  [string]$TargetDirectory,
-  [string]$ExecutableName
-)
-$ErrorActionPreference = "Stop"
-while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
-  Start-Sleep -Milliseconds 500
-}
-$ExtractDirectory = Join-Path $env:TEMP ("event-atlas-update-" + $ProcessId)
-Remove-Item $ExtractDirectory -Recurse -Force -ErrorAction SilentlyContinue
-New-Item $ExtractDirectory -ItemType Directory -Force | Out-Null
-Expand-Archive -LiteralPath $Archive -DestinationPath $ExtractDirectory -Force
-$SourceExecutable = Get-ChildItem $ExtractDirectory -Filter "*.exe" -File -Recurse |
-  Sort-Object @{ Expression = { $_.Name -ne $ExecutableName } }, FullName |
-  Select-Object -First 1
-if ($null -eq $SourceExecutable) { throw "更新包中没有找到应用程序。" }
-$InstalledExecutableName = $SourceExecutable.Name
-Copy-Item (Join-Path $SourceExecutable.Directory.FullName "*") $TargetDirectory -Recurse -Force
-if ($ExecutableName -ne $InstalledExecutableName) {
-  Remove-Item (Join-Path $TargetDirectory $ExecutableName) -Force -ErrorAction SilentlyContinue
-}
-Remove-Item $Archive -Force -ErrorAction SilentlyContinue
-Remove-Item $ExtractDirectory -Recurse -Force -ErrorAction SilentlyContinue
-Start-Process (Join-Path $TargetDirectory $InstalledExecutableName)
-Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
-''');
+    final log = io.File(path.join(temporary.path, 'install-update.log'));
+    await script.writeAsString('\uFEFF${_windowsUpdateScript()}');
     await io.Process.start('powershell.exe', [
       '-NoProfile',
+      '-WindowStyle',
+      'Hidden',
       '-ExecutionPolicy',
       'Bypass',
       '-File',
@@ -317,9 +321,173 @@ Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue
       targetDirectory,
       '-ExecutableName',
       executableName,
+      '-LogPath',
+      log.path,
+      '-StartMarker',
+      installerStarted.path,
     ], mode: io.ProcessStartMode.detached);
   }
 }
+
+String _windowsUpdateScript() => r'''
+param(
+  [int]$ProcessId,
+  [string]$Archive,
+  [string]$TargetDirectory,
+  [string]$ExecutableName,
+  [string]$LogPath,
+  [string]$StartMarker,
+  [switch]$Elevated
+)
+$ErrorActionPreference = 'Stop'
+
+function Write-UpdateLog([string]$Message) {
+  try {
+    Add-Content -LiteralPath $LogPath -Value ((Get-Date).ToString('o') + ' ' + $Message)
+  } catch {
+  }
+}
+
+function Show-UpdateFailure([string]$Message) {
+  try {
+    Add-Type -AssemblyName PresentationFramework
+    [System.Windows.MessageBox]::Show(
+      $Message,
+      'Thing',
+      [System.Windows.MessageBoxButton]::OK,
+      [System.Windows.MessageBoxImage]::Error
+    ) | Out-Null
+  } catch {
+  }
+}
+
+function Schedule-TemporaryDirectoryCleanup {
+  try {
+    $temporaryDirectory = Split-Path -Parent $PSCommandPath
+    $escapedDirectory = $temporaryDirectory.Replace("'", "''")
+    $cleanupCommand = "Start-Sleep -Milliseconds 1000; Remove-Item -LiteralPath '$escapedDirectory' -Recurse -Force -ErrorAction SilentlyContinue"
+    $encodedCommand = [Convert]::ToBase64String(
+      [Text.Encoding]::Unicode.GetBytes($cleanupCommand)
+    )
+    Start-Process `
+      -FilePath 'powershell.exe' `
+      -WindowStyle Hidden `
+      -ArgumentList @(
+        '-NoProfile',
+        '-WindowStyle', 'Hidden',
+        '-ExecutionPolicy', 'Bypass',
+        '-EncodedCommand', $encodedCommand
+      ) | Out-Null
+  } catch {
+  }
+}
+
+function Remove-UpdateArtifacts {
+  Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $StartMarker -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+  Schedule-TemporaryDirectoryCleanup
+}
+
+function Start-ElevatedUpdate {
+  function Quote-ProcessArgument([string]$Value) {
+    return '"' + $Value + '"'
+  }
+  $argumentList = @(
+    '-NoProfile',
+    '-WindowStyle', 'Hidden',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', (Quote-ProcessArgument $PSCommandPath),
+    '-ProcessId', [string]$ProcessId,
+    '-Archive', (Quote-ProcessArgument $Archive),
+    '-TargetDirectory', (Quote-ProcessArgument $TargetDirectory),
+    '-ExecutableName', (Quote-ProcessArgument $ExecutableName),
+    '-LogPath', (Quote-ProcessArgument $LogPath),
+    '-StartMarker', (Quote-ProcessArgument $StartMarker),
+    '-Elevated'
+  ) -join ' '
+  $child = Start-Process `
+    -FilePath 'powershell.exe' `
+    -WindowStyle Hidden `
+    -Verb RunAs `
+    -ArgumentList $argumentList `
+    -PassThru
+  if ($null -eq $child) { throw '无法启动管理员权限更新进程。' }
+  Write-UpdateLog '已请求管理员权限重试更新。'
+}
+
+function Invoke-Update {
+  $processDeadline = (Get-Date).AddSeconds(60)
+  while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -gt $processDeadline) { throw '等待旧程序退出超时。' }
+    Start-Sleep -Milliseconds 200
+  }
+
+  $extractDirectory = Join-Path -Path ([IO.Path]::GetTempPath()) -ChildPath ('thing-update-extract-' + [Guid]::NewGuid().ToString('N'))
+  try {
+    New-Item -Path $extractDirectory -ItemType Directory -Force | Out-Null
+    Expand-Archive -LiteralPath $Archive -DestinationPath $extractDirectory -Force
+    $sourceExecutable = Get-ChildItem -LiteralPath $extractDirectory `
+      -Filter $ExecutableName -File -Recurse | Select-Object -First 1
+    if ($null -eq $sourceExecutable) { throw '更新包中没有找到应用程序。' }
+
+    $targetExecutable = Join-Path $TargetDirectory $ExecutableName
+    $fileDeadline = (Get-Date).AddSeconds(30)
+    while (Test-Path -LiteralPath $targetExecutable) {
+      try {
+        $stream = [IO.File]::Open(
+          $targetExecutable,
+          [IO.FileMode]::Open,
+          [IO.FileAccess]::ReadWrite,
+          [IO.FileShare]::None
+        )
+        $stream.Dispose()
+        break
+      } catch {
+        if ((Get-Date) -gt $fileDeadline) { throw '旧程序文件仍被占用。' }
+        Start-Sleep -Milliseconds 200
+      }
+    }
+
+    Get-ChildItem -LiteralPath $sourceExecutable.Directory.FullName -Force |
+      Copy-Item -Destination $TargetDirectory -Recurse -Force
+    if (-not (Test-Path -LiteralPath $targetExecutable)) {
+      throw '更新文件复制后未找到应用程序。'
+    }
+    Start-Process -FilePath $targetExecutable -WorkingDirectory $TargetDirectory
+    Write-UpdateLog '更新完成。'
+  } finally {
+    Remove-Item -LiteralPath $extractDirectory -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+try {
+  # Windows PowerShell 5.1 supports -Path here, not -LiteralPath.
+  New-Item -Path $StartMarker -ItemType File -Force | Out-Null
+  Write-UpdateLog '安装器已启动。'
+  if (-not $Elevated) {
+    try {
+      Invoke-Update
+    } catch {
+      $accessDenied = $_.Exception -is [UnauthorizedAccessException] `
+        -or $_.FullyQualifiedErrorId -like '*UnauthorizedAccess*'
+      if (-not $accessDenied) { throw }
+      Start-ElevatedUpdate
+      exit 0
+    }
+  } else {
+    Invoke-Update
+  }
+  Remove-UpdateArtifacts
+} catch {
+  $message = 'Thing 更新失败，请重试。' + [Environment]::NewLine + $_.Exception.Message
+  Write-UpdateLog $message
+  Show-UpdateFailure $message
+  Remove-UpdateArtifacts
+  exit 1
+}
+''';
 
 String _safeFileName(String value) {
   final name = path.basename(value).replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
