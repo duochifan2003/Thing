@@ -343,8 +343,9 @@ ThemeData _atlasTheme(
   final dark = brightness == Brightness.dark;
   final primary = Color(primaryColor.value);
   final companion = Color(primaryColor.companionValue);
-  final paper = dark ? const Color(0xff0b0b0b) : companion;
-  final sidebar = dark ? const Color(0xff111111) : companion;
+  final lightBackground = Color.lerp(companion, Colors.white, 0.25)!;
+  final paper = dark ? const Color(0xff0b0b0b) : lightBackground;
+  final sidebar = dark ? const Color(0xff111111) : lightBackground;
   final card = dark ? const Color(0xff171717) : companion;
   final ink = dark ? Colors.white : _contrastText(companion);
   final muted = Color.lerp(ink, card, 0.34)!;
