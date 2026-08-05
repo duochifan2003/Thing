@@ -108,6 +108,8 @@ void main() {
       primaryColor: AppPrimaryColor.royalBlueYellow,
       colorShadows: false,
       defaultPrecision: Precision.range,
+      syncDirectory: '/tmp/shared',
+      syncDirectoryBookmark: 'bookmark-data',
     );
     await repository.saveSettings(settings);
 
@@ -116,6 +118,15 @@ void main() {
     expect(loaded.primaryColor, AppPrimaryColor.royalBlueYellow);
     expect(loaded.colorShadows, isFalse);
     expect(loaded.defaultPrecision, Precision.range);
+    expect(loaded.syncDirectory, '/tmp/shared');
+    expect(loaded.syncDirectoryBookmark, 'bookmark-data');
+  });
+
+  test('round-trips every color pairing in local settings', () async {
+    for (final color in AppPrimaryColor.values) {
+      await repository.saveSettings(AppSettings(primaryColor: color));
+      expect((await repository.loadSettings()).primaryColor, color);
+    }
   });
 
   test('maps retired palette values to the remaining palettes', () {

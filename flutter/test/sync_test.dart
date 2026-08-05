@@ -239,6 +239,37 @@ void main() {
     },
   );
 
+  test('waits for a sync file to finish replacing before reading', () async {
+    final root = await Directory.systemTemp.createTemp('event-atlas-retry-');
+    addTearDown(() => root.delete(recursive: true));
+    final syncDirectory = path.join(root.path, 'shared');
+    final repository = ArchiveRepository(
+      databasePath: path.join(root.path, 'archive.sqlite'),
+    );
+    addTearDown(repository.close);
+    final remoteEnvelope = _envelope(
+      _person('p-remote'),
+      'remote',
+      DateTime.utc(2025, 1, 2),
+    );
+    final remoteFile = File(path.join(syncDirectory, SyncService.fileName));
+    await remoteFile.parent.create(recursive: true);
+    await remoteFile.writeAsString('{');
+    final repair = Future<void>.delayed(
+      const Duration(milliseconds: 250),
+      () async => remoteFile.writeAsString(remoteEnvelope.encode()),
+    );
+
+    final report = await SyncService(repository).synchronize(
+      directory: syncDirectory,
+      retention: TrashRetention.thirtyDays,
+    );
+    await repair;
+
+    expect(report.outcome, SyncOutcome.downloaded);
+    expect((await repository.load()).people.single.id, 'p-remote');
+  });
+
   test('applies a remote deletion to an existing local archive', () async {
     final root = await Directory.systemTemp.createTemp(
       'event-atlas-delete-sync-',

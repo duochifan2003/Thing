@@ -54,6 +54,7 @@ void main() {
     addTearDown(repository.close);
 
     await tester.binding.setSurfaceSize(const Size(1100, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
     await tester.pumpAndSettle();
 
@@ -63,9 +64,48 @@ void main() {
     expect(find.text('设置'), findsOneWidget);
   });
 
-  testWidgets('uses distinct semantic colors for event statuses', (
+  testWidgets('opens an event as a full-page detail on wide windows', (
     tester,
   ) async {
+    final repository = ArchiveRepository(databasePath: ':memory:');
+    addTearDown(repository.close);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await repository.savePerson(seedArchive.people.first);
+    await repository.saveEvent(seedArchive.events.first);
+
+    await tester.binding.setSurfaceSize(const Size(1100, 800));
+    await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(seedArchive.events.first.title));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ArchiveDetail), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('detail-expansion-animation')),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('返回'), findsOneWidget);
+    expect(find.byTooltip('关闭'), findsNothing);
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('编辑'));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑事件'), findsOneWidget);
+    expect(find.text('基本信息'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '保存修改'), findsOneWidget);
+
+    await tester.tap(find.text('取消编辑'));
+    await tester.pumpAndSettle();
+    expect(find.text('事件详情'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('返回'));
+    await tester.pumpAndSettle();
+    expect(find.text('事件时间线'), findsOneWidget);
+  });
+
+  testWidgets('uses shared semantic colors for event statuses', (tester) async {
     final events = EventStatus.values
         .map(
           (status) => seedArchive.events.first.copyWith(
@@ -100,6 +140,7 @@ void main() {
     addTearDown(repository.close);
 
     await tester.binding.setSurfaceSize(const Size(1100, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
     await tester.pumpAndSettle();
 
@@ -119,6 +160,20 @@ void main() {
     expect(find.text('草木 · 奶油'), findsNothing);
     expect(find.text('彩色阴影'), findsOneWidget);
 
+    const palettes = {
+      'berryRedOat': (0xffb50031, 0xffe0d1bd),
+      'royalBlueYellow': (0xff012bac, 0xffffcf00),
+    };
+    for (final entry in palettes.entries) {
+      await tester.tap(find.byKey(ValueKey('primary-${entry.key}')));
+      await tester.pumpAndSettle();
+      final paletteApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expect(paletteApp.theme?.colorScheme.primary, Color(entry.value.$1));
+      expect(paletteApp.theme?.colorScheme.secondary, Color(entry.value.$2));
+    }
+    await tester.tap(find.byKey(const ValueKey('primary-berryRedOat')));
+    await tester.pumpAndSettle();
+
     await tester.tap(find.text('深色'));
     await tester.pumpAndSettle();
 
@@ -127,6 +182,54 @@ void main() {
     expect(app.darkTheme?.colorScheme.primary, const Color(0xffb50031));
     expect(app.theme?.shadowColor, const Color(0xffb50031));
     expect(app.theme?.cardTheme.shadowColor, const Color(0xffb50031));
+  });
+
+  testWidgets('keeps theme surfaces and semantic colors distinct', (
+    tester,
+  ) async {
+    final repository = ArchiveRepository(databasePath: ':memory:');
+    addTearDown(repository.close);
+
+    await tester.binding.setSurfaceSize(const Size(1100, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(PersonEventAtlasApp(repository: repository));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('atlas-grain')), findsOneWidget);
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+
+    void expectTheme(ThemeData theme) {
+      final colors = theme.colorScheme;
+      final surfaces = {
+        colors.surface,
+        colors.surfaceContainerLowest,
+        colors.surfaceContainerLow,
+        colors.surfaceContainer,
+        colors.surfaceContainerHigh,
+        colors.surfaceContainerHighest,
+      };
+      expect(surfaces, hasLength(greaterThan(1)));
+
+      final onSurface = colors.onSurface;
+      final onSurfaceVariant = colors.onSurfaceVariant;
+      expect(onSurface, anyOf(Colors.black, Colors.white));
+      expect(onSurfaceVariant.withAlpha(0xff), onSurface);
+      expect(onSurfaceVariant.a, lessThan(onSurface.a));
+
+      expect(colors.error, isNot(colors.primary));
+      expect(theme.navigationRailTheme.backgroundColor, isNot(colors.primary));
+      expect(theme.navigationBarTheme.backgroundColor, isNot(colors.primary));
+      expect(theme.chipTheme.backgroundColor, isNot(colors.primary));
+    }
+
+    const palettes = ['berryRedOat', 'royalBlueYellow'];
+    for (final palette in palettes) {
+      await tester.tap(find.byKey(ValueKey('primary-$palette')));
+      await tester.pumpAndSettle();
+      final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expectTheme(app.theme!);
+      expectTheme(app.darkTheme!);
+    }
   });
 
   testWidgets('changes the new event precision preference', (tester) async {
@@ -150,11 +253,12 @@ void main() {
     expect(menu.animated, isTrue);
     expect(menu.style?.alignment, AlignmentDirectional.bottomStart);
     expect(menu.style?.shape?.resolve({}), isA<RoundedRectangleBorder>());
+    final inputRect = tester.getRect(find.byType(InputDecorator));
+    final menuItemRect = tester.getRect(find.text('年份').last);
     expect(
-      tester.getTopLeft(find.text('年份').last).dy,
-      greaterThanOrEqualTo(
-        tester.getBottomLeft(find.byType(InputDecorator)).dy,
-      ),
+      menuItemRect.bottom <= inputRect.top ||
+          menuItemRect.top >= inputRect.bottom,
+      isTrue,
     );
     await tester.tap(find.text('月份').last);
     await tester.pumpAndSettle();
@@ -277,7 +381,9 @@ void main() {
             onPerson: (_) {},
             onEvent: (_) {},
             onEditPerson: (_) {},
-            onEditEvent: (_) {},
+            onStartEventEdit: () {},
+            onCancelEventEdit: () {},
+            onSaveEvent: (_) async {},
             onDeletePerson: (_) {},
             onDeleteEvent: (_) {},
             onCancelEvent: (_) {},

@@ -6,11 +6,8 @@ private let widgetDefaultsSuite = "local.munch.eventatlas.widget-data"
 private let recentEventsKey = "recentEvents"
 
 private enum AtlasColor {
-  static let paper = Color(red: 247 / 255, green: 247 / 255, blue: 241 / 255)
-  static let ink = Color(red: 23 / 255, green: 33 / 255, blue: 29 / 255)
-  static let muted = Color(red: 117 / 255, green: 128 / 255, blue: 120 / 255)
-  static let green = Color(red: 24 / 255, green: 92 / 255, blue: 69 / 255)
-  static let accent = Color(red: 221 / 255, green: 112 / 255, blue: 76 / 255)
+  static let mint = Color(red: 125 / 255, green: 255 / 255, blue: 222 / 255)
+  static let charcoal = Color(red: 47 / 255, green: 47 / 255, blue: 47 / 255)
 }
 
 struct ArchiveEvent: Codable, Identifiable {
@@ -81,11 +78,16 @@ struct ArchiveEvent: Codable, Identifiable {
 
   var statusColor: Color {
     switch status {
-    case "scheduled": return Color(red: 164 / 255, green: 90 / 255, blue: 16 / 255)
-    case "active": return Color(red: 36 / 255, green: 91 / 255, blue: 145 / 255)
-    case "completed": return Color(red: 75 / 255, green: 94 / 255, blue: 112 / 255)
-    case "cancelled": return Color(red: 166 / 255, green: 62 / 255, blue: 76 / 255)
-    default: return AtlasColor.green
+    case "scheduled", "cancelled": return AtlasColor.charcoal
+    case "active", "completed": return AtlasColor.mint
+    default: return AtlasColor.charcoal
+    }
+  }
+
+  var statusTextColor: Color {
+    switch status {
+    case "active", "completed": return Color.black
+    default: return Color.white
     }
   }
 }
@@ -148,8 +150,8 @@ struct EventAtlasWidgetView: View {
       }
     }
     .padding(contentInsets)
-    .foregroundStyle(AtlasColor.ink)
-    .containerBackground(for: .widget) { AtlasColor.paper }
+    .foregroundStyle(Color.black)
+    .containerBackground(for: .widget) { AtlasColor.mint }
   }
 
   private var contentInsets: EdgeInsets {
@@ -173,12 +175,12 @@ struct EventAtlasWidgetView: View {
           Text("Thing")
             .font(.system(size: 12, weight: .bold))
           Spacer(minLength: 0)
-          Circle().fill(AtlasColor.accent).frame(width: 6, height: 6)
+          Circle().fill(AtlasColor.charcoal).frame(width: 6, height: 6)
         }
         Spacer(minLength: 2)
         Text(event.dateLabel)
           .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(AtlasColor.green)
+          .foregroundStyle(Color.black)
           .lineLimit(1)
         Text(event.title)
           .font(.system(size: 17, weight: .bold))
@@ -187,7 +189,7 @@ struct EventAtlasWidgetView: View {
         if !event.place.isEmpty {
           Text(event.place)
             .font(.system(size: 10))
-            .foregroundStyle(AtlasColor.muted)
+            .foregroundStyle(Color.black)
             .lineLimit(1)
         }
       }
@@ -203,7 +205,7 @@ struct EventAtlasWidgetView: View {
           Spacer(minLength: 0)
           Text("今天 · \(todayLabel) · \(visibleEvents.count) 条")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(AtlasColor.muted)
+            .foregroundStyle(Color.black)
         }
         .frame(height: 20)
 
@@ -231,7 +233,7 @@ struct EventAtlasWidgetView: View {
           Spacer(minLength: 0)
           Text("今天 · \(todayLabel) · \(events.count) 条")
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(AtlasColor.muted)
+            .foregroundStyle(Color.black)
         }
 
         featuredEventCard(featuredEvent)
@@ -239,7 +241,7 @@ struct EventAtlasWidgetView: View {
         if !recentEvents.isEmpty {
           Text("其他最近更新")
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(AtlasColor.muted)
+            .foregroundStyle(Color.black)
 
           VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(recentEvents.enumerated()), id: \.element.id) { item in
@@ -264,7 +266,7 @@ struct EventAtlasWidgetView: View {
         Spacer(minLength: 8)
         Text(event.dateLabel)
           .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(AtlasColor.green)
+          .foregroundStyle(Color.black)
           .lineLimit(1)
       }
 
@@ -275,7 +277,7 @@ struct EventAtlasWidgetView: View {
       if let description = event.widgetDescription {
         Text(description)
           .font(.system(size: 11.5))
-          .foregroundStyle(AtlasColor.muted)
+          .foregroundStyle(Color.white)
           .lineLimit(2)
       }
 
@@ -283,13 +285,14 @@ struct EventAtlasWidgetView: View {
       if !details.isEmpty {
         Text(details)
           .font(.system(size: 10.5, weight: .medium))
-          .foregroundStyle(AtlasColor.muted)
+          .foregroundStyle(Color.white)
           .lineLimit(1)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(12)
-    .background(AtlasColor.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .background(AtlasColor.charcoal, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .foregroundStyle(Color.white)
   }
 
   private func mediumEventRow(_ event: ArchiveEvent) -> some View {
@@ -302,7 +305,7 @@ struct EventAtlasWidgetView: View {
         if let place = event.widgetPlaceLabel {
           Text(place)
             .font(.system(size: 10.5))
-            .foregroundStyle(AtlasColor.muted)
+            .foregroundStyle(Color.black)
             .lineLimit(1)
             .truncationMode(.tail)
         }
@@ -328,7 +331,7 @@ struct EventAtlasWidgetView: View {
         if !details.isEmpty {
           Text(details)
             .font(.system(size: 11))
-            .foregroundStyle(AtlasColor.muted)
+            .foregroundStyle(Color.black)
             .lineLimit(1)
             .truncationMode(.tail)
         }
@@ -341,21 +344,21 @@ struct EventAtlasWidgetView: View {
   private func statusPill(_ event: ArchiveEvent) -> some View {
     Text(event.statusLabel)
       .font(.system(size: 9.5, weight: .semibold))
-      .foregroundStyle(event.statusColor)
+      .foregroundStyle(event.statusTextColor)
       .lineLimit(1)
       .padding(.horizontal, 7)
       .padding(.vertical, 3)
-      .background(event.statusColor.opacity(0.12), in: Capsule())
+      .background(event.statusColor, in: Capsule())
   }
 
   private func dateBadge(_ event: ArchiveEvent) -> some View {
     Text(event.widgetDateLabel)
       .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-      .foregroundStyle(AtlasColor.green)
       .lineLimit(1)
       .minimumScaleFactor(0.85)
       .frame(width: 68, height: 18, alignment: .center)
-      .background(AtlasColor.green.opacity(0.09), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+      .background(AtlasColor.charcoal, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+      .foregroundStyle(Color.white)
   }
 
   private func message(_ title: String, detail: String) -> some View {
@@ -364,12 +367,12 @@ struct EventAtlasWidgetView: View {
         .font(.system(size: 12, weight: .bold))
       Spacer(minLength: 0)
       HStack(alignment: .top, spacing: 9) {
-        Circle().fill(AtlasColor.accent).frame(width: 8, height: 8).padding(.top, 5)
+        Circle().fill(AtlasColor.charcoal).frame(width: 8, height: 8).padding(.top, 5)
         VStack(alignment: .leading, spacing: 4) {
           Text(title).font(.system(size: 15, weight: .bold))
           Text(detail)
             .font(.system(size: 10))
-            .foregroundStyle(AtlasColor.muted)
+            .foregroundStyle(Color.black)
         }
       }
       Spacer(minLength: 0)
