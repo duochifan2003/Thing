@@ -14,6 +14,19 @@ void main() {
     );
   });
 
+  test('round-trips portable event image data in archive v2', () {
+    const imageData = ['iVBORw0KGgo='];
+    final archive = seedArchive.copyWith(
+      events: [seedArchive.events.first.copyWith(images: imageData)],
+    );
+    expect(archive.events.first.copyWith(title: '更新').images, imageData);
+
+    final decoded = Archive.decode(archive.encode());
+
+    expect(decoded.events.first.images, imageData);
+    expect(decoded.events.first.toJson()['images'], imageData);
+  });
+
   test('accepts JSON exports from the Web version', () {
     final decoded = Archive.decode('''
       {"version":1,"people":[{"id":"p","name":"林岚","createdAt":"2025-01-01T00:00:00.000","updatedAt":"2025-01-01T00:00:00.000"}],"events":[{"id":"e","title":"访谈","precision":"day","start":"2025-01-01","createdAt":"2025-01-01T00:00:00.000","updatedAt":"2025-01-01T00:00:00.000","people":[{"personId":"p","role":"当事人"}]}],"revisions":[]}
@@ -21,6 +34,7 @@ void main() {
 
     expect(decoded.events.single.people.single.role, Role.organizer);
     expect(decoded.events.single.status, EventStatus.completed);
+    expect(decoded.events.single.images, isEmpty);
   });
 
   test('round-trips planned status and predecessor links', () {

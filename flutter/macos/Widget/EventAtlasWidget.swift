@@ -5,9 +5,31 @@ import WidgetKit
 private let widgetDefaultsSuite = "local.munch.eventatlas.widget-data"
 private let recentEventsKey = "recentEvents"
 
-private enum AtlasColor {
-  static let mint = Color(red: 125 / 255, green: 255 / 255, blue: 222 / 255)
-  static let charcoal = Color(red: 47 / 255, green: 47 / 255, blue: 47 / 255)
+enum WidgetPalette: String {
+  case berryRedOat
+  case royalBlueYellow
+
+  init(_ value: String?) {
+    self = WidgetPalette(rawValue: value ?? "") ?? .berryRedOat
+  }
+
+  var primary: Color {
+    switch self {
+    case .berryRedOat: return Color(red: 181 / 255, green: 0, blue: 49 / 255)
+    case .royalBlueYellow: return Color(red: 1 / 255, green: 43 / 255, blue: 172 / 255)
+    }
+  }
+
+  var companion: Color {
+    switch self {
+    case .berryRedOat: return Color(red: 224 / 255, green: 209 / 255, blue: 189 / 255)
+    case .royalBlueYellow: return Color(red: 1, green: 207 / 255, blue: 0)
+    }
+  }
+
+  var ink: Color { .black }
+  var muted: Color { .black.opacity(0.62) }
+  var error: Color { Color(red: 181 / 255, green: 0, blue: 49 / 255) }
 }
 
 struct ArchiveEvent: Codable, Identifiable {
@@ -76,18 +98,12 @@ struct ArchiveEvent: Codable, Identifiable {
     }
   }
 
-  var statusColor: Color {
+  func statusColor(for palette: WidgetPalette) -> Color {
     switch status {
-    case "scheduled", "cancelled": return AtlasColor.charcoal
-    case "active", "completed": return AtlasColor.mint
-    default: return AtlasColor.charcoal
-    }
-  }
-
-  var statusTextColor: Color {
-    switch status {
-    case "active", "completed": return Color.black
-    default: return Color.white
+    case "scheduled", "active": return palette.primary
+    case "completed": return palette.muted
+    case "cancelled": return palette.error
+    default: return palette.primary
     }
   }
 }
@@ -96,6 +112,7 @@ struct EventAtlasEntry: TimelineEntry {
   enum State { case content([ArchiveEvent]), empty, unavailable }
   let date: Date
   let state: State
+  let primaryColor: String
 }
 
 struct EventAtlasProvider: TimelineProvider {
@@ -107,7 +124,7 @@ struct EventAtlasProvider: TimelineProvider {
       ArchiveEvent(id: "preview-4", title: "档案整理工作坊", precision: "day", start: "2025-03-11", end: nil, place: "厦门市 · 集美区", description: nil, status: "scheduled", tags: ["工作坊"]),
       ArchiveEvent(id: "preview-5", title: "旧城照片征集", precision: "day", start: "2025-03-04", end: nil, place: "厦门市 · 湖里区", description: nil, status: "cancelled", tags: ["征集"]),
       ArchiveEvent(id: "preview-6", title: "展览布置完成", precision: "day", start: "2025-02-26", end: nil, place: "厦门市", description: nil, status: "completed", tags: ["展览"]),
-    ]))
+    ]), primaryColor: WidgetPalette.berryRedOat.rawValue)
   }
 
   func getSnapshot(in context: Context, completion: @escaping (EventAtlasEntry) -> Void) {
@@ -119,22 +136,39 @@ struct EventAtlasProvider: TimelineProvider {
   }
 
   private func entry() -> EventAtlasEntry {
-    guard let events = ArchiveReader().recentEvents() else {
-      return EventAtlasEntry(date: .now, state: .unavailable)
+    guard let data = ArchiveReader().widgetData() else {
+      return EventAtlasEntry(
+        date: .now,
+        state: .unavailable,
+        primaryColor: WidgetPalette.berryRedOat.rawValue
+      )
     }
-    return EventAtlasEntry(date: .now, state: events.isEmpty ? .empty : .content(events))
+    return EventAtlasEntry(
+      date: .now,
+      state: data.events.isEmpty ? .empty : .content(data.events),
+      primaryColor: data.primaryColor ?? WidgetPalette.berryRedOat.rawValue
+    )
   }
 }
 
 private struct ArchiveReader {
-  func recentEvents() -> [ArchiveEvent]? {
+  struct WidgetData: Codable {
+    let events: [ArchiveEvent]
+    let primaryColor: String?
+  }
+
+  func widgetData() -> WidgetData? {
     guard let data = UserDefaults(suiteName: widgetDefaultsSuite)?.data(forKey: recentEventsKey) else {
       return nil
     }
-    return try? JSONDecoder().decode(ArchiveResponse.self, from: data).events
+    guard let response = try? JSONDecoder().decode(WidgetData.self, from: data) else {
+      return nil
+    }
+    return WidgetData(
+      events: response.events,
+      primaryColor: response.primaryColor
+    )
   }
-
-  private struct ArchiveResponse: Codable { let events: [ArchiveEvent] }
 }
 
 struct EventAtlasWidgetView: View {
@@ -150,9 +184,11 @@ struct EventAtlasWidgetView: View {
       }
     }
     .padding(contentInsets)
-    .foregroundStyle(Color.black)
-    .containerBackground(for: .widget) { AtlasColor.mint }
+    .foregroundStyle(palette.ink)
+    .containerBackground(for: .widget) { palette.companion }
   }
+
+  private var palette: WidgetPalette { WidgetPalette(entry.primaryColor) }
 
   private var contentInsets: EdgeInsets {
     if family == .systemLarge {
@@ -175,12 +211,12 @@ struct EventAtlasWidgetView: View {
           Text("Thing")
             .font(.system(size: 12, weight: .bold))
           Spacer(minLength: 0)
-          Circle().fill(AtlasColor.charcoal).frame(width: 6, height: 6)
+          Circle().fill(palette.primary).frame(width: 6, height: 6)
         }
         Spacer(minLength: 2)
         Text(event.dateLabel)
           .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(Color.black)
+          .foregroundStyle(palette.primary)
           .lineLimit(1)
         Text(event.title)
           .font(.system(size: 17, weight: .bold))
@@ -189,7 +225,7 @@ struct EventAtlasWidgetView: View {
         if !event.place.isEmpty {
           Text(event.place)
             .font(.system(size: 10))
-            .foregroundStyle(Color.black)
+            .foregroundStyle(palette.muted)
             .lineLimit(1)
         }
       }
@@ -205,7 +241,7 @@ struct EventAtlasWidgetView: View {
           Spacer(minLength: 0)
           Text("今天 · \(todayLabel) · \(visibleEvents.count) 条")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(Color.black)
+            .foregroundStyle(palette.muted)
         }
         .frame(height: 20)
 
@@ -233,7 +269,7 @@ struct EventAtlasWidgetView: View {
           Spacer(minLength: 0)
           Text("今天 · \(todayLabel) · \(events.count) 条")
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Color.black)
+            .foregroundStyle(palette.muted)
         }
 
         featuredEventCard(featuredEvent)
@@ -241,7 +277,7 @@ struct EventAtlasWidgetView: View {
         if !recentEvents.isEmpty {
           Text("其他最近更新")
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Color.black)
+            .foregroundStyle(palette.muted)
 
           VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(recentEvents.enumerated()), id: \.element.id) { item in
@@ -266,7 +302,7 @@ struct EventAtlasWidgetView: View {
         Spacer(minLength: 8)
         Text(event.dateLabel)
           .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(Color.black)
+          .foregroundStyle(palette.primary)
           .lineLimit(1)
       }
 
@@ -277,7 +313,7 @@ struct EventAtlasWidgetView: View {
       if let description = event.widgetDescription {
         Text(description)
           .font(.system(size: 11.5))
-          .foregroundStyle(Color.white)
+          .foregroundStyle(palette.muted)
           .lineLimit(2)
       }
 
@@ -285,14 +321,13 @@ struct EventAtlasWidgetView: View {
       if !details.isEmpty {
         Text(details)
           .font(.system(size: 10.5, weight: .medium))
-          .foregroundStyle(Color.white)
+          .foregroundStyle(palette.muted)
           .lineLimit(1)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(12)
-    .background(AtlasColor.charcoal, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    .foregroundStyle(Color.white)
+    .background(palette.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
   }
 
   private func mediumEventRow(_ event: ArchiveEvent) -> some View {
@@ -305,7 +340,7 @@ struct EventAtlasWidgetView: View {
         if let place = event.widgetPlaceLabel {
           Text(place)
             .font(.system(size: 10.5))
-            .foregroundStyle(Color.black)
+            .foregroundStyle(palette.muted)
             .lineLimit(1)
             .truncationMode(.tail)
         }
@@ -331,7 +366,7 @@ struct EventAtlasWidgetView: View {
         if !details.isEmpty {
           Text(details)
             .font(.system(size: 11))
-            .foregroundStyle(Color.black)
+            .foregroundStyle(palette.muted)
             .lineLimit(1)
             .truncationMode(.tail)
         }
@@ -344,21 +379,21 @@ struct EventAtlasWidgetView: View {
   private func statusPill(_ event: ArchiveEvent) -> some View {
     Text(event.statusLabel)
       .font(.system(size: 9.5, weight: .semibold))
-      .foregroundStyle(event.statusTextColor)
+      .foregroundStyle(event.statusColor(for: palette))
       .lineLimit(1)
       .padding(.horizontal, 7)
       .padding(.vertical, 3)
-      .background(event.statusColor, in: Capsule())
+      .background(event.statusColor(for: palette).opacity(0.12), in: Capsule())
   }
 
   private func dateBadge(_ event: ArchiveEvent) -> some View {
     Text(event.widgetDateLabel)
       .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+      .foregroundStyle(palette.primary)
       .lineLimit(1)
       .minimumScaleFactor(0.85)
       .frame(width: 68, height: 18, alignment: .center)
-      .background(AtlasColor.charcoal, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-      .foregroundStyle(Color.white)
+      .background(palette.primary.opacity(0.09), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
   }
 
   private func message(_ title: String, detail: String) -> some View {
@@ -367,12 +402,12 @@ struct EventAtlasWidgetView: View {
         .font(.system(size: 12, weight: .bold))
       Spacer(minLength: 0)
       HStack(alignment: .top, spacing: 9) {
-        Circle().fill(AtlasColor.charcoal).frame(width: 8, height: 8).padding(.top, 5)
+        Circle().fill(palette.primary).frame(width: 8, height: 8).padding(.top, 5)
         VStack(alignment: .leading, spacing: 4) {
           Text(title).font(.system(size: 15, weight: .bold))
           Text(detail)
             .font(.system(size: 10))
-            .foregroundStyle(Color.black)
+            .foregroundStyle(palette.muted)
         }
       }
       Spacer(minLength: 0)

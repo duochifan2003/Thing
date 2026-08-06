@@ -1,38 +1,41 @@
-1.叫我主人
-2.避免使用“不是……而是……”等模板化对立句式；能并列说明时，不要强行制造二选一。
-3.简单任务由主 Agent直接完成；复杂任务仅在有明确收益时按需调用子 Agent。子 Agent默认使用 GPT-5.6 Luna 这类低消耗模型，只有在任务难度、风险或失败情况确实需要时才升级模型。
-4.避免使用 Emoji；需要表达语气时，可使用自然文字或标点代替。
-5.日常交流中保持简短、自然，不要一次性倾倒大量内容或方案；仅在明确需要详细分析、对比或完整方案时再展开。
-
---- project-doc ---
-
 # Repository Guidelines
 
 ## Project Structure
 
-- `flutter/lib/` contains the shared Flutter interface, models, JSON migration, and SQLite repository.
-- `flutter/test/` contains unit and widget tests.
-- `flutter/assets/` contains application branding.
-- `flutter/android/`, `flutter/macos/`, and `flutter/windows/` contain generated platform runners.
+- `flutter/lib/` contains the Flutter UI, domain models, archive import/export, synchronization, and SQLite persistence.
+- `flutter/test/` contains unit, repository, synchronization, update, and widget tests.
+- `flutter/macos/`, `flutter/windows/`, and `flutter/android/` contain platform runners and native integrations; the macOS WidgetKit extension is under `flutter/macos/Widget/`.
+- `flutter/assets/` stores bundled branding assets. `scripts/` contains macOS packaging helpers, and `.github/workflows/flutter.yml` defines CI.
 
-## Development and Verification
+## Build, Test, and Development Commands
 
-Use Flutter stable. Run commands from `flutter/`:
+Run Flutter commands from `flutter/`:
 
-- `flutter pub get` installs dependencies.
-- `flutter analyze` checks Dart code.
-- `flutter test` runs unit and widget tests.
-- `flutter run -d macos` starts the macOS client.
-- `flutter build macos --debug` builds the macOS client.
+```bash
+flutter pub get                              # install dependencies
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze                              # static analysis
+flutter test                                 # unit and widget tests
+flutter run -d macos                         # run the macOS client
+flutter build macos --debug                  # build macOS locally
+flutter build windows --release              # build Windows (Windows/CI)
+flutter build apk --debug                    # build Android
+```
 
-Verify Android on a device or emulator. Verify Windows on Windows or CI.
+From the repository root, `sh scripts/package-macos-dmg.sh` builds the macOS release DMG; it requires `dmgbuild`.
 
-## Style and Testing
+## Coding Style & Naming
 
-Use `dart format` before submitting changes. Follow Dart conventions: two-space indentation, `PascalCase` types, `camelCase` members, and strict null safety. Add focused tests for storage, import/export, validations, and user-visible workflows.
+Use Dart null safety, two-space indentation, and `dart format`. Use `snake_case.dart` filenames, `PascalCase` types, and `camelCase` members and functions. Keep platform-specific code in its platform directory and do not edit generated Flutter files manually. Prefer the existing local-first SQLite and Archive v2 patterns before adding new persistence or serialization code.
 
-## Commits
+## Testing Guidelines
 
-Keep commits scoped and imperative. State user impact and the verification commands in pull requests.
+Add focused tests in `flutter/test/` for behavior changes, especially storage, archive import/export, synchronization, validation, and user-visible workflows. Name files with the subject and `_test.dart` suffix, such as `archive_repository_test.dart`. The repository has no enforced coverage threshold; every change must pass formatting, analysis, and `flutter test`. The pre-commit hook runs `dart analyze` and `flutter test` when staged files touch `flutter/`.
 
-A pre-commit hook at `flutter/tool/git-hooks/pre-commit` runs `dart analyze` and `flutter test` whenever staged changes touch `flutter/`. Enable it once per clone: `ln -sf ../../flutter/tool/git-hooks/pre-commit .git/hooks/pre-commit`.
+## Commits and Pull Requests
+
+Recent commits use short, imperative subjects, often in Chinese. Keep each commit focused; examples include `修复回收站删除` and `Add archive validation`. Pull requests should explain the user impact, link an issue when applicable, list verification commands, and include screenshots or recordings for UI changes. Report the OS, app version, and reproduction steps for bug fixes. Do not commit build outputs, local databases, JSON archives, sync folders, or secrets.
+
+## Compatibility Notes
+
+Preserve the existing bundle identifiers, database names, sync filenames, and WidgetKit identifiers unless a migration is included. Changes to release behavior should also be checked against the platform-specific build and packaging workflow.

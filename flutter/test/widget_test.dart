@@ -155,9 +155,13 @@ void main() {
     expect(find.byType(RadioListTile<AppThemeMode>), findsNothing);
     expect(find.text('莓红 · 燕麦色'), findsOneWidget);
     expect(find.text('宝蓝 · 明黄'), findsOneWidget);
+    expect(find.text('薄荷 · 炭灰'), findsNothing);
+    expect(find.text('亮橙 · 深青'), findsNothing);
+    expect(find.text('草木 · 奶油'), findsNothing);
+    expect(find.text('彩色阴影'), findsOneWidget);
 
     const palettes = {
-      'berryRedOat': (0xffb50031, 0xffdac9b1),
+      'berryRedOat': (0xffb50031, 0xffe0d1bd),
       'royalBlueYellow': (0xff012bac, 0xffffcf00),
     };
     for (final entry in palettes.entries) {
@@ -167,14 +171,17 @@ void main() {
       expect(paletteApp.theme?.colorScheme.primary, Color(entry.value.$1));
       expect(paletteApp.theme?.colorScheme.secondary, Color(entry.value.$2));
     }
+    await tester.tap(find.byKey(const ValueKey('primary-berryRedOat')));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('深色'));
     await tester.pumpAndSettle();
 
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.themeMode, ThemeMode.dark);
-    expect(app.darkTheme?.colorScheme.primary, const Color(0xff012bac));
-    expect(app.darkTheme?.colorScheme.secondary, const Color(0xffffcf00));
+    expect(app.darkTheme?.colorScheme.primary, const Color(0xffb50031));
+    expect(app.theme?.shadowColor, const Color(0xffb50031));
+    expect(app.theme?.cardTheme.shadowColor, const Color(0xffb50031));
   });
 
   testWidgets('keeps theme surfaces and semantic colors distinct', (
@@ -334,6 +341,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(existing.precision.label), findsOneWidget);
+  });
+
+  testWidgets('shows an album-style image area in event editors', (
+    tester,
+  ) async {
+    const image =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EventEditor(
+            initial: seedArchive.events.first.copyWith(images: const [image]),
+            people: seedArchive.people,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('图片'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, '添加图片'), findsOneWidget);
+    expect(find.byTooltip('移除图片'), findsOneWidget);
   });
 
   testWidgets('uses an animated anchored menu for detail actions', (

@@ -20,12 +20,17 @@ class AppDelegate: FlutterAppDelegate {
       binaryMessenger: controller.engine.binaryMessenger
     )
     channel.setMethodCallHandler { call, result in
-      guard call.method == "update", let events = (call.arguments as? [String: Any])?["events"] else {
+      let arguments = call.arguments as? [String: Any]
+      guard call.method == "update", let events = arguments?["events"] else {
         result(FlutterMethodNotImplemented)
         return
       }
-      guard JSONSerialization.isValidJSONObject(["events": events]),
-            let data = try? JSONSerialization.data(withJSONObject: ["events": events]),
+      let payload: [String: Any] = [
+        "events": events,
+        "primaryColor": arguments?["primaryColor"] as? String ?? "berryRedOat",
+      ]
+      guard JSONSerialization.isValidJSONObject(payload),
+            let data = try? JSONSerialization.data(withJSONObject: payload),
             let defaults = UserDefaults(suiteName: widgetDefaultsSuite) else {
         result(FlutterError(
           code: "widget_cache_unavailable",

@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.21"
+  #define AppVersion "0.1.28"
 #endif
 
 #define AppName "Thing"

@@ -35,7 +35,7 @@ extension AppPrimaryColorLabel on AppPrimaryColor {
   };
 
   int get companionValue => switch (this) {
-    AppPrimaryColor.berryRedOat => 0xffdac9b1,
+    AppPrimaryColor.berryRedOat => 0xffe0d1bd,
     AppPrimaryColor.royalBlueYellow => 0xffffcf00,
   };
 }
@@ -64,6 +64,7 @@ class AppSettings {
   const AppSettings({
     this.themeMode = AppThemeMode.system,
     this.primaryColor = AppPrimaryColor.berryRedOat,
+    this.colorShadows = true,
     this.defaultPrecision = Precision.day,
     this.syncEnabled = false,
     this.syncDirectory,
@@ -73,6 +74,7 @@ class AppSettings {
 
   final AppThemeMode themeMode;
   final AppPrimaryColor primaryColor;
+  final bool colorShadows;
   final Precision defaultPrecision;
   final bool syncEnabled;
   final String? syncDirectory;
@@ -84,6 +86,7 @@ class AppSettings {
   AppSettings copyWith({
     AppThemeMode? themeMode,
     AppPrimaryColor? primaryColor,
+    bool? colorShadows,
     Precision? defaultPrecision,
     bool? syncEnabled,
     String? syncDirectory,
@@ -94,6 +97,7 @@ class AppSettings {
   }) => AppSettings(
     themeMode: themeMode ?? this.themeMode,
     primaryColor: primaryColor ?? this.primaryColor,
+    colorShadows: colorShadows ?? this.colorShadows,
     defaultPrecision: defaultPrecision ?? this.defaultPrecision,
     syncEnabled: syncEnabled ?? this.syncEnabled,
     syncDirectory: clearSyncDirectory
@@ -108,6 +112,7 @@ class AppSettings {
   Map<String, dynamic> toJson() => {
     'themeMode': themeMode.name,
     'primaryColor': primaryColor.name,
+    'colorShadows': colorShadows,
     'defaultPrecision': defaultPrecision.name,
     'syncEnabled': syncEnabled,
     'syncDirectory': syncDirectory,
@@ -126,6 +131,7 @@ class AppSettings {
     return AppSettings(
       themeMode: _themeMode(json['themeMode']),
       primaryColor: _primaryColor(json['primaryColor']),
+      colorShadows: json['colorShadows'] != false,
       defaultPrecision: _precision(json['defaultPrecision']),
       syncEnabled: json['syncEnabled'] == true,
       syncDirectory:
@@ -159,13 +165,17 @@ AppThemeMode _themeMode(Object? value) => switch (value) {
 };
 
 AppPrimaryColor _primaryColor(Object? value) => switch (value) {
-  'terracotta' => AppPrimaryColor.berryRedOat,
+  'berryRedOat' || 'berryRed' => AppPrimaryColor.berryRedOat,
+  'royalBlueYellow' ||
+  'royalBlue' ||
   'oceanBlue' => AppPrimaryColor.royalBlueYellow,
-  'berryRedOat' => AppPrimaryColor.berryRedOat,
-  'royalBlueYellow' => AppPrimaryColor.royalBlueYellow,
-  'forestGreen' => AppPrimaryColor.berryRedOat,
-  'mintGreenCharcoal' => AppPrimaryColor.berryRedOat,
-  'brightOrangeDarkTeal' => AppPrimaryColor.berryRedOat,
+  'mintGreen' ||
+  'brightOrange' ||
+  'leafGreen' ||
+  'terracotta' ||
+  'forestGreen' ||
+  'mintGreenCharcoal' ||
+  'brightOrangeDarkTeal' ||
   'creamWhiteLeafGreen' => AppPrimaryColor.berryRedOat,
   _ => AppPrimaryColor.berryRedOat,
 };

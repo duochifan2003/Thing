@@ -40,6 +40,24 @@ void main() {
     },
   );
 
+  test('stores and replaces event image data in SQLite', () async {
+    await repository.replace(
+      Archive(
+        people: [_person('p-1')],
+        events: [
+          _event('e-1', 'p-1').copyWith(images: const ['aW1hZ2UtYQ==']),
+        ],
+      ),
+    );
+    expect((await repository.load()).events.single.images, ['aW1hZ2UtYQ==']);
+
+    await repository.saveEvent(
+      _event('e-1', 'p-1').copyWith(images: const ['aW1hZ2UtYg==']),
+    );
+
+    expect((await repository.load()).events.single.images, ['aW1hZ2UtYg==']);
+  });
+
   test('starts a new database without sample archive data', () async {
     final loaded = await repository.load();
 
@@ -82,11 +100,13 @@ void main() {
       (await repository.loadSettings()).primaryColor,
       AppPrimaryColor.berryRedOat,
     );
+    expect((await repository.loadSettings()).colorShadows, isTrue);
     expect((await repository.loadSettings()).defaultPrecision, Precision.day);
 
     const settings = AppSettings(
       themeMode: AppThemeMode.dark,
       primaryColor: AppPrimaryColor.royalBlueYellow,
+      colorShadows: false,
       defaultPrecision: Precision.range,
       syncDirectory: '/tmp/shared',
       syncDirectoryBookmark: 'bookmark-data',
@@ -96,6 +116,7 @@ void main() {
     final loaded = await repository.loadSettings();
     expect(loaded.themeMode, AppThemeMode.dark);
     expect(loaded.primaryColor, AppPrimaryColor.royalBlueYellow);
+    expect(loaded.colorShadows, isFalse);
     expect(loaded.defaultPrecision, Precision.range);
     expect(loaded.syncDirectory, '/tmp/shared');
     expect(loaded.syncDirectoryBookmark, 'bookmark-data');
@@ -114,9 +135,13 @@ void main() {
       AppPrimaryColor.royalBlueYellow,
     );
     expect(
-      AppSettings.fromJson({'primaryColor': 'mintGreenCharcoal'}).primaryColor,
+      AppSettings.fromJson({'primaryColor': 'terracotta'}).primaryColor,
       AppPrimaryColor.berryRedOat,
     );
+    expect(AppPrimaryColor.values, [
+      AppPrimaryColor.berryRedOat,
+      AppPrimaryColor.royalBlueYellow,
+    ]);
   });
 
   test(
@@ -602,6 +627,12 @@ void main() {
       final loaded = await migrated.load();
       expect(loaded.events.single.status, EventStatus.completed);
       expect(loaded.events.single.previousEventIds, isEmpty);
+      expect(loaded.events.single.images, isEmpty);
+
+      await migrated.saveEvent(
+        loaded.events.single.copyWith(images: const ['b2xkLWltYWdl']),
+      );
+      expect((await migrated.load()).events.single.images, ['b2xkLWltYWdl']);
     },
   );
 }

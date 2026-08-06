@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thing 配色预览</title>
+    <style>
+      :root {
+        --base: #e0d1bd;
+        --accent: #b50031;
+        --ink: #000;
+        --accent-ink: #fff;
+        --muted: rgba(0, 0, 0, 0.58);
+        --danger: #b50031;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--base);
+        color: var(--ink);
+        font-family: ui-rounded, "SF Pro Rounded", "PingFang SC", system-ui, sans-serif;
+      }
+
+      button { font: inherit; }
+
+      .page {
+        width: min(1120px, calc(100% - 32px));
+        margin: 24px auto;
+      }
+
+      .intro {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: end;
+        margin-bottom: 16px;
+      }
+
+      .intro h1 {
+        margin: 0;
+        font-size: clamp(28px, 4vw, 46px);
+        letter-spacing: -0.04em;
+      }
+
+      .intro p {
+        max-width: 420px;
+        margin: 8px 0 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .palette-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .palette-choice {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        min-height: 74px;
+        padding: 0;
+        overflow: hidden;
+        cursor: pointer;
+        border: 2px solid transparent;
+        background: var(--choice-base);
+        color: var(--choice-ink);
+        text-align: left;
+      }
+
+      .palette-choice:hover,
+      .palette-choice:focus-visible {
+        border-color: var(--choice-accent);
+        outline: 0;
+      }
+
+      .palette-choice.is-selected {
+        border-color: var(--ink);
+        box-shadow: 4px 4px 0 var(--choice-accent);
+      }
+
+      .choice-half { padding: 10px; }
+      .choice-half.accent { background: var(--choice-accent); color: var(--choice-accent-ink); }
+      .choice-name { font-weight: 800; font-size: 13px; }
+      .choice-code { margin-top: 5px; font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; opacity: 0.74; }
+
+      .app {
+        display: grid;
+        grid-template-columns: 208px 1fr;
+        min-height: 640px;
+        overflow: hidden;
+        border: 2px solid var(--accent);
+        background: var(--base);
+        box-shadow: 10px 10px 0 var(--accent);
+      }
+
+      .rail {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+        padding: 22px 16px;
+        border-right: 2px solid var(--accent);
+      }
+
+      .brand { display: flex; align-items: center; gap: 10px; }
+
+      .brand-mark {
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border: 2px solid var(--ink);
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 900;
+      }
+
+      .brand strong { display: block; font-size: 16px; }
+      .brand small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; letter-spacing: 0.08em; }
+
+      .nav { display: grid; gap: 7px; }
+
+      .nav button {
+        padding: 11px 12px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--ink);
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .nav button:hover { border-color: var(--accent); }
+      .nav button.is-active { background: var(--accent); color: var(--accent-ink); }
+
+      .rail-note {
+        margin-top: auto;
+        padding-top: 14px;
+        border-top: 1px solid var(--accent);
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .main { padding: 26px 28px 30px; }
+
+      .topline {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: start;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--accent);
+      }
+
+      .eyebrow { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: 0.14em; }
+      .topline h2 { margin: 8px 0 0; font-size: clamp(24px, 4vw, 38px); letter-spacing: -0.04em; }
+
+      .current-palette {
+        padding: 8px 10px;
+        border: 1px solid var(--accent);
+        color: var(--muted);
+        font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: nowrap;
+      }
+
+      .content { display: grid; gap: 16px; margin-top: 20px; }
+      .card { border: 1px solid var(--accent); padding: 18px; }
+      .card h3 { margin: 0; font-size: 16px; }
+      .card p { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+      .event-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+
+      .event {
+        min-height: 118px;
+        padding: 13px;
+        border: 1px solid var(--accent);
+        box-shadow: 4px 4px 0 var(--accent);
+      }
+
+      .event time { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .event strong { display: block; margin-top: 25px; font-size: 15px; }
+      .event span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+
+      .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
+      .button { padding: 10px 14px; border: 1px solid var(--accent); cursor: pointer; }
+      .button.primary { background: var(--accent); color: var(--accent-ink); }
+      .button.secondary { background: transparent; color: var(--ink); }
+      .button:hover { box-shadow: 3px 3px 0 var(--accent); }
+
+      .chip-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+      .chip { padding: 6px 9px; border: 1px solid var(--accent); color: var(--ink); font-size: 12px; }
+      .chip.selected { background: var(--accent); color: var(--accent-ink); }
+
+      .lower { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+      .state {
+        margin-top: 13px;
+        padding: 12px;
+        border: 1px solid var(--danger);
+        color: var(--danger);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .state strong { display: block; margin-bottom: 3px; }
+
+      .rule-list { display: grid; gap: 10px; margin: 14px 0 0; padding: 0; list-style: none; }
+      .rule-list li { display: flex; justify-content: space-between; gap: 12px; padding-bottom: 9px; border-bottom: 1px solid var(--accent); font-size: 12px; }
+      .rule-list span { color: var(--muted); }
+
+      .footnote { margin: 22px 0 0; color: var(--muted); font-size: 12px; }
+
+      @media (max-width: 760px) {
+        .page { width: min(100% - 20px, 620px); margin: 12px auto 24px; }
+        .intro { display: block; }
+        .palette-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .app { grid-template-columns: 1fr; }
+        .rail { border-right: 0; border-bottom: 2px solid var(--accent); }
+        .nav { grid-template-columns: repeat(3, 1fr); }
+        .rail-note { display: none; }
+        .event-grid, .lower { grid-template-columns: 1fr; }
+        .main { padding: 20px 16px 24px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="intro">
+        <div>
+          <h1>Thing 配色预览</h1>
+          <p>点击上方配色，查看它在真实应用结构里的比例。大面积使用 companion，primary 只放在选中态、按钮、边框和少量标签上。</p>
+        </div>
+        <div class="current-palette" id="currentLabel">BERRY RED / OAT BEIGE</div>
+      </section>
+
+      <section class="palette-list" aria-label="配色选择">
+        <button class="palette-choice is-selected" data-theme="berry" style="--choice-base:#E0D1BD;--choice-accent:#B50031;--choice-ink:#000;--choice-accent-ink:#fff">
+          <span class="choice-half"><span class="choice-name">莓红 · 燕麦色</span><span class="choice-code">#E0D1BD</span></span>
+          <span class="choice-half accent"><span class="choice-name">Berry</span><span class="choice-code">#B50031</span></span>
+        </button>
+        <button class="palette-choice" data-theme="royal" style="--choice-base:#FFCF00;--choice-accent:#012BAC;--choice-ink:#000;--choice-accent-ink:#fff">
+          <span class="choice-half"><span class="choice-name">宝蓝 · 明黄</span><span class="choice-code">#FFCF00</span></span>
+          <span class="choice-half accent"><span class="choice-name">Royal</span><span class="choice-code">#012BAC</span></span>
+        </button>
+      </section>
+
+      <section class="app" aria-label="Thing 应用配色预览">
+        <aside class="rail">
+          <div class="brand">
+            <div class="brand-mark">T</div>
+            <div><strong>Thing</strong><small>THE ARCHIVE</small></div>
+          </div>
+          <nav class="nav" aria-label="主导航">
+            <button class="is-active">时间线</button>
+            <button>人物目录</button>
+            <button>标签管理</button>
+          </nav>
+          <div class="rail-note">你的资料只保存在此设备。<br />配色只改变视觉层，不改变内容。</div>
+        </aside>
+
+        <div class="main">
+          <header class="topline">
+            <div><div class="eyebrow">THING · ARCHIVE</div><h2>今天的记录</h2></div>
+            <div class="current-palette" id="currentCode">BASE #E0D1BD · ACCENT #B50031</div>
+          </header>
+
+          <div class="content">
+            <section class="card">
+              <h3>最近事件</h3>
+              <p>surface 留给 companion，primary 只承担操作反馈。</p>
+              <div class="event-grid">
+                <article class="event"><time>08.04 · 09:30</time><strong>整理旧照片</strong><span>资料 · 个人</span></article>
+                <article class="event"><time>08.04 · 14:00</time><strong>给妈妈打电话</strong><span>人物 · 家庭</span></article>
+                <article class="event"><time>08.05 · 18:20</time><strong>发布新版本</strong><span>工作 · Thing</span></article>
+              </div>
+              <div class="toolbar"><button class="button primary">新建事件</button><button class="button secondary">导入 JSON</button></div>
+            </section>
+
+            <div class="lower">
+              <section class="card">
+                <h3>筛选标签</h3>
+                <div class="chip-list"><span class="chip selected">全部</span><span class="chip">工作</span><span class="chip">家庭</span><span class="chip">旅行</span></div>
+              </section>
+              <section class="card">
+                <h3>状态分离</h3>
+                <div class="state"><strong>错误状态 · #B50031</strong>更新失败时使用独立状态色，不复用当前 primary。</div>
+              </section>
+            </div>
+
+            <section class="card">
+              <h3>这组颜色的使用规则</h3>
+              <ul class="rule-list">
+                <li><span>大面积 surface</span><strong id="baseRule">Oat Beige #E0D1BD</strong></li>
+                <li><span>主要操作 / 选中态</span><strong id="accentRule">Berry Red #B50031</strong></li>
+                <li><span>文字</span><strong>纯黑 / 纯白 + 透明度</strong></li>
+              </ul>
+            </section>
+          </div>
+          <p class="footnote">预览使用参考图中的颜色：无渐变、无灰色文字、无额外配色。</p>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const themes = {
+        berry: { base: '#E0D1BD', accent: '#B50031', ink: '#000', accentInk: '#fff', baseName: 'Oat Beige', accentName: 'Berry Red', label: 'BERRY RED / OAT BEIGE' },
+        royal: { base: '#FFCF00', accent: '#012BAC', ink: '#000', accentInk: '#fff', baseName: 'Bright Yellow', accentName: 'Royal Blue', label: 'ROYAL BLUE / BRIGHT YELLOW' },
+      };
+
+      const root = document.documentElement;
+      const label = document.querySelector('#currentLabel');
+      const code = document.querySelector('#currentCode');
+      const baseRule = document.querySelector('#baseRule');
+      const accentRule = document.querySelector('#accentRule');
+
+      function setTheme(name) {
+        const theme = themes[name];
+        root.style.setProperty('--base', theme.base);
+        root.style.setProperty('--accent', theme.accent);
+        root.style.setProperty('--ink', theme.ink);
+        root.style.setProperty('--accent-ink', theme.accentInk);
+        root.style.setProperty('--muted', theme.ink === '#000' ? 'rgba(0, 0, 0, 0.58)' : 'rgba(255, 255, 255, 0.62)');
+        label.textContent = theme.label;
+        code.textContent = `BASE ${theme.base} · ACCENT ${theme.accent}`;
+        baseRule.textContent = `${theme.baseName} ${theme.base}`;
+        accentRule.textContent = `${theme.accentName} ${theme.accent}`;
+        document.querySelectorAll('.palette-choice').forEach((button) => button.classList.toggle('is-selected', button.dataset.theme === name));
+      }
+
+      document.querySelectorAll('.palette-choice').forEach((button) => button.addEventListener('click', () => setTheme(button.dataset.theme)));
+      setTheme('berry');
+    </script>
+  </body>
+</html>

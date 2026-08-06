@@ -54,19 +54,25 @@ class ArchiveRepository {
     final version = _schemaVersion(database);
     if (!_tableExists(database, 'events')) {
       _createSchema(database);
-      database.execute('PRAGMA user_version = 2');
-    } else if (version < 2) {
+      database.execute('PRAGMA user_version = 3');
+    } else if (version < 3) {
       _transaction(database, () {
-        final hasStatus = database
+        final columns = database
             .select('PRAGMA table_info(events)')
-            .any((row) => row['name'] == 'status');
-        if (!hasStatus) {
+            .map((row) => row['name'] as String)
+            .toSet();
+        if (!columns.contains('status')) {
           database.execute(
             "ALTER TABLE events ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'",
           );
         }
+        if (!columns.contains('images')) {
+          database.execute(
+            "ALTER TABLE events ADD COLUMN images TEXT NOT NULL DEFAULT '[]'",
+          );
+        }
         _createRelationsTable(database);
-        database.execute('PRAGMA user_version = 2');
+        database.execute('PRAGMA user_version = 3');
       });
     } else {
       _createRelationsTable(database);
@@ -591,7 +597,8 @@ class ArchiveRepository {
         sources TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'completed'
+        status TEXT NOT NULL DEFAULT 'completed',
+        images TEXT NOT NULL DEFAULT '[]'
       );
       CREATE TABLE IF NOT EXISTS event_people (
         event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -800,8 +807,8 @@ class ArchiveRepository {
   }) {
     database.execute(
       '''
-      INSERT INTO events (id, title, precision, start, end_date, place, description, tags, sources, created_at, updated_at, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO events (id, title, precision, start, end_date, place, description, tags, sources, created_at, updated_at, status, images)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         precision = excluded.precision,
@@ -813,7 +820,8 @@ class ArchiveRepository {
         sources = excluded.sources,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
-        status = excluded.status
+        status = excluded.status,
+        images = excluded.images
     ''',
       [
         event.id,
@@ -828,6 +836,7 @@ class ArchiveRepository {
         event.createdAt.toIso8601String(),
         event.updatedAt.toIso8601String(),
         event.status.name,
+        jsonEncode(event.images),
       ],
     );
     database.execute('DELETE FROM event_people WHERE event_id = ?', [event.id]);
@@ -900,6 +909,7 @@ class ArchiveRepository {
         )
         .toList(),
     status: _eventStatusFromName(row['status'] as String),
+    images: (jsonDecode(row['images'] as String) as List).cast<String>(),
     previousEventIds: database
         .select(
           'SELECT predecessor_event_id FROM event_relations WHERE event_id = ? ORDER BY predecessor_event_id',
