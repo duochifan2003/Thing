@@ -50,13 +50,13 @@ Color _personOnSurface(BuildContext context) =>
     Theme.of(context).colorScheme.onSurface;
 
 Color _personTagSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.primary.withAlpha(0x18);
+    Theme.of(context).colorScheme.surface;
 
 Color _personTagOnSurface(BuildContext context) =>
     Theme.of(context).colorScheme.onSurface;
 
 Color _eventTagSurface(BuildContext context) =>
-    Theme.of(context).colorScheme.primary.withAlpha(0x12);
+    Theme.of(context).colorScheme.surface;
 
 Color _eventTagOnSurface(BuildContext context) =>
     Theme.of(context).colorScheme.onSurface;
@@ -4798,11 +4798,11 @@ class _PersonEditorState extends State<PersonEditor> {
               final selected = _split(_tags.text).contains(tag);
               return FilterChip(
                 backgroundColor: _personTagSurface(context),
-                selectedColor: _personTagSurface(context),
-                checkmarkColor: _personTagOnSurface(context),
+                selectedColor: Theme.of(context).colorScheme.primary,
+                checkmarkColor: Theme.of(context).colorScheme.onPrimary,
                 labelStyle: TextStyle(
                   color: selected
-                      ? _personTagOnSurface(context)
+                      ? Theme.of(context).colorScheme.onPrimary
                       : Theme.of(context).colorScheme.onSurface,
                 ),
                 label: Text(tag),
@@ -5198,11 +5198,11 @@ class _EventEditorState extends State<EventEditor> {
               final selected = _split(_tags.text).contains(tag);
               return FilterChip(
                 backgroundColor: _eventTagSurface(context),
-                selectedColor: _eventTagSurface(context),
-                checkmarkColor: _eventTagOnSurface(context),
+                selectedColor: Theme.of(context).colorScheme.primary,
+                checkmarkColor: Theme.of(context).colorScheme.onPrimary,
                 labelStyle: TextStyle(
                   color: selected
-                      ? _eventTagOnSurface(context)
+                      ? Theme.of(context).colorScheme.onPrimary
                       : Theme.of(context).colorScheme.onSurface,
                 ),
                 label: Text(tag),

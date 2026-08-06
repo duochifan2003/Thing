@@ -1,7 +1,7 @@
 name: person_event_atlas
 description: 本地优先的人物事件档案。
 publish_to: none
-version: 0.1.29+52
+version: 0.1.30+53
 
 environment:
   sdk: ^3.8.0

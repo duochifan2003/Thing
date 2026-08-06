@@ -5,9 +5,9 @@ import 'package:desktop_updater/desktop_updater.dart';
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.28',
+  defaultValue: '0.1.30',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '51');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '53');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
