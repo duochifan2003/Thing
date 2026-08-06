@@ -219,11 +219,12 @@ List<Map<String, dynamic>> widgetEventPayload(Archive archive) {
       .toList();
 }
 
-Future<void> _updateWidget(Archive archive) async {
+Future<void> _updateWidget(Archive archive, AppSettings settings) async {
   if (!Platform.isMacOS) return;
   try {
     await _widgetChannel.invokeMethod<void>('update', {
       'events': widgetEventPayload(archive),
+      'primaryColor': settings.primaryColor.name,
     });
   } on PlatformException {
     // Running outside the macOS app has no WidgetKit channel.
@@ -792,6 +793,9 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     if (oldWidget.settings.trashRetention != widget.settings.trashRetention) {
       unawaited(_repository.purgeExpiredTrash(widget.settings.trashRetention));
     }
+    if (oldWidget.settings.primaryColor != widget.settings.primaryColor) {
+      unawaited(_reload());
+    }
   }
 
   @override
@@ -805,7 +809,7 @@ class _ArchiveHomeState extends State<ArchiveHome> {
     try {
       final archive = await _repository.load();
       final syncMetadata = await _repository.loadSyncMetadata();
-      unawaited(_updateWidget(archive));
+      unawaited(_updateWidget(archive, widget.settings));
       if (mounted) {
         setState(() {
           _archive = archive;
