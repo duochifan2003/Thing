@@ -4,6 +4,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val signingProperties = java.util.Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.isFile) file.inputStream().use { load(it) }
+}
+
 android {
     namespace = "local.munch.eventatlas"
     compileSdk = flutter.compileSdkVersion
@@ -26,9 +31,16 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            require(signingProperties.stringPropertyNames().containsAll(
+                setOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+            )) { "Release signing is unavailable: android/key.properties is required." }
+            signingConfigs.create("release") {
+                storeFile = rootProject.file(signingProperties.getProperty("storeFile"))
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+            }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
