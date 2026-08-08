@@ -12,6 +12,8 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   country_state_city_pro: ^0.0.6
+  crypto: ^3.0.6
+  cryptography_plus: ^2.7.1
   desktop_updater: ^2.7.0
   file_selector: ^1.0.3
   path: ^1.9.1
