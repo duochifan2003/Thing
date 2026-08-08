@@ -1,14 +1,25 @@
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:crypto/crypto.dart' as crypto;
+import 'package:cryptography_plus/cryptography_plus.dart';
 import 'package:desktop_updater/desktop_updater.dart';
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.21',
+  defaultValue: '0.1.22',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '44');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '45');
 const appVersionLabel = 'v$appVersion+$appBuild';
+
+const defaultReleasePublicKeyId = 'thing-release-2026';
+const defaultReleasePublicKey = 'vX+FZ4m9LP6AvCFMDbmOzf89ziI5coXAxPE1dYpjpLA=';
+const defaultPinnedReleasePublicKeys = <String, String>{
+  defaultReleasePublicKeyId: defaultReleasePublicKey,
+};
+const defaultPinnedAuthenticodeThumbprints = <String>[
+  '961ADF40EB6795D3CC487D402D16D6C6247D503620E93BD3726AD72F7BC1B2D7',
+];
 
 const _repository = 'duochifan2003/Thing';
 const _latestReleaseUri =
@@ -17,6 +28,20 @@ const _latestReleaseUri =
 typedef UpdateProgress = void Function(double value);
 typedef UpdateJsonFetcher = Future<String> Function(Uri uri);
 typedef UpdateExit = Never Function(int code);
+typedef UpdateInstaller =
+    Future<void> Function({
+      required String stagingPath,
+      List<String> removedFiles,
+      bool allowUnsignedMacOSUpdates,
+      String? diagnosticsLogPath,
+    });
+typedef UpdateDownloader =
+    Future<UpdateStageResult> Function({
+      required Uri appArchiveUrl,
+      required DesktopVersionInfo currentVersion,
+      required ReleaseDescriptor descriptor,
+      void Function(int receivedBytes, int? totalBytes)? onProgress,
+    });
 
 class AppUpdateException implements Exception {
   const AppUpdateException(this.message);
@@ -27,34 +52,95 @@ class AppUpdateException implements Exception {
   String toString() => message;
 }
 
+Future<bool> verifyReleaseSignature({
+  required ReleaseDescriptor descriptor,
+  required Map<String, String> publicKeys,
+  Ed25519? algorithm,
+}) async {
+  final signature = descriptor.signature;
+  if (signature == null ||
+      signature.algorithm != 'ed25519' ||
+      signature.publicKeyId.trim().isEmpty ||
+      signature.value.trim().isEmpty) {
+    return false;
+  }
+  final publicKeyValue = publicKeys[signature.publicKeyId];
+  if (publicKeyValue == null || publicKeyValue.trim().isEmpty) {
+    return false;
+  }
+  try {
+    final publicKeyBytes = base64Decode(publicKeyValue.trim());
+    final signatureBytes = base64Decode(signature.value.trim());
+    final publicKey = SimplePublicKey(
+      publicKeyBytes,
+      type: KeyPairType.ed25519,
+    );
+    final ed25519 = algorithm ?? Ed25519();
+    return await ed25519.verify(
+      descriptor.canonicalSignatureBytes(),
+      signature: Signature(signatureBytes, publicKey: publicKey),
+    );
+  } on Object {
+    return false;
+  }
+}
+
+Future<void> verifyArtifactDigest({
+  required io.File file,
+  required String expectedSha256,
+  required int expectedLength,
+}) async {
+  final actualLength = await file.length();
+  if (actualLength != expectedLength) {
+    throw io.FileSystemException(
+      'Artifact length mismatch: expected $expectedLength, got $actualLength',
+      file.path,
+    );
+  }
+  final digest = await crypto.sha256.bind(file.openRead()).first;
+  if (digest.toString().toLowerCase() != expectedSha256.toLowerCase()) {
+    throw io.FileSystemException(
+      'Artifact SHA-256 mismatch: expected $expectedSha256, got $digest',
+      file.path,
+    );
+  }
+}
+
 class AppUpdateAsset {
   const AppUpdateAsset({
     required this.name,
     required this.downloadUrl,
     this.size = 0,
     this.sha256 = '',
+    this.signature,
   });
 
   final String name;
   final Uri downloadUrl;
   final int size;
   final String sha256;
+  final ReleaseSignature? signature;
 }
 
 class AppUpdateRelease {
-  const AppUpdateRelease({
+  AppUpdateRelease({
     required this.version,
     required this.tagName,
     required this.htmlUrl,
     required this.notes,
     required this.assets,
-  });
+    this.signature,
+    DateTime? generatedAt,
+  }) : generatedAt =
+           generatedAt ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
   final String version;
   final String tagName;
   final Uri htmlUrl;
   final String notes;
   final List<AppUpdateAsset> assets;
+  final ReleaseSignature? signature;
+  final DateTime generatedAt;
 
   AppUpdateAsset? assetFor(String operatingSystem) {
     final candidates = assets.where((asset) {
@@ -92,6 +178,20 @@ class AppUpdateRelease {
     if (releaseUrl == null || !_isAllowedGitHubUri(releaseUrl)) {
       throw const FormatException('GitHub 更新地址无效。');
     }
+
+    final topSignature = _parseSignature(json['signature']);
+    final signaturesMap = _parseSignaturesMap(json['signatures']);
+    final bodySignatures = _parseSignaturesFromBody(json['body']);
+
+    final generatedAt =
+        DateTime.tryParse(
+          json['published_at'] as String? ??
+              json['created_at'] as String? ??
+              json['generated_at'] as String? ??
+              '',
+        ) ??
+        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+
     final assets = <AppUpdateAsset>[];
     final rawAssets = json['assets'];
     if (rawAssets is List) {
@@ -103,6 +203,12 @@ class AppUpdateRelease {
         final uri = Uri.tryParse(downloadUrl);
         if (uri == null || !_isAllowedGitHubUri(uri)) continue;
         final digest = rawAsset['digest'];
+        final assetSig =
+            _parseSignature(rawAsset['signature']) ??
+            signaturesMap[name] ??
+            bodySignatures[name] ??
+            topSignature;
+
         assets.add(
           AppUpdateAsset(
             name: name,
@@ -110,7 +216,10 @@ class AppUpdateRelease {
             size: rawAsset['size'] is int ? rawAsset['size'] as int : 0,
             sha256: digest is String && digest.startsWith('sha256:')
                 ? digest.substring('sha256:'.length).toLowerCase()
-                : '',
+                : (rawAsset['sha256'] is String
+                      ? (rawAsset['sha256'] as String).toLowerCase()
+                      : ''),
+            signature: assetSig,
           ),
         );
       }
@@ -121,8 +230,57 @@ class AppUpdateRelease {
       htmlUrl: releaseUrl,
       notes: json['body'] is String ? json['body'] as String : '',
       assets: assets,
+      signature: topSignature,
+      generatedAt: generatedAt,
     );
   }
+}
+
+ReleaseSignature? _parseSignature(dynamic value) {
+  if (value == null) return null;
+  if (value is Map) {
+    return ReleaseSignature.fromJson(Map<String, dynamic>.from(value));
+  }
+  if (value is String && value.trim().isNotEmpty) {
+    return ReleaseSignature(
+      algorithm: 'ed25519',
+      publicKeyId: defaultReleasePublicKeyId,
+      value: value.trim(),
+    );
+  }
+  return null;
+}
+
+Map<String, ReleaseSignature> _parseSignaturesMap(dynamic value) {
+  if (value is! Map) return const {};
+  final map = <String, ReleaseSignature>{};
+  for (final entry in value.entries) {
+    final key = entry.key?.toString().trim() ?? '';
+    final parsed = _parseSignature(entry.value);
+    if (key.isNotEmpty && parsed != null) {
+      map[key] = parsed;
+    }
+  }
+  return map;
+}
+
+Map<String, ReleaseSignature> _parseSignaturesFromBody(dynamic body) {
+  if (body is! String || body.isEmpty) return const {};
+  try {
+    final pattern = RegExp(
+      r'```(?:json)?\s*(\{[\s\S]*?"signatures"[\s\S]*?\})\s*```',
+    );
+    final match = pattern.firstMatch(body);
+    if (match != null) {
+      final decoded = jsonDecode(match.group(1)!);
+      if (decoded is Map && decoded['signatures'] is Map) {
+        return _parseSignaturesMap(decoded['signatures']);
+      }
+    }
+  } catch (_) {
+    // Ignore body parsing errors
+  }
+  return const {};
 }
 
 class AppUpdateService {
@@ -131,14 +289,28 @@ class AppUpdateService {
     String? operatingSystem,
     UpdateJsonFetcher? fetchJson,
     UpdateExit? exitApp,
+    UpdateInstaller? installUpdate,
+    UpdateDownloader? downloadUpdate,
+    Map<String, String>? pinnedPublicKeys,
+    List<String>? pinnedAuthenticodeThumbprints,
   }) : operatingSystem = operatingSystem ?? io.Platform.operatingSystem,
        _fetchJson = fetchJson,
-       _exitApp = exitApp ?? io.exit;
+       _exitApp = exitApp ?? io.exit,
+       _installUpdate = installUpdate,
+       _downloadUpdate = downloadUpdate,
+       _pinnedPublicKeys = pinnedPublicKeys ?? defaultPinnedReleasePublicKeys,
+       _pinnedAuthenticodeThumbprints =
+           pinnedAuthenticodeThumbprints ??
+           defaultPinnedAuthenticodeThumbprints;
 
   final String currentVersion;
   final String operatingSystem;
   final UpdateJsonFetcher? _fetchJson;
   final UpdateExit _exitApp;
+  final UpdateInstaller? _installUpdate;
+  final UpdateDownloader? _downloadUpdate;
+  final Map<String, String> _pinnedPublicKeys;
+  final List<String> _pinnedAuthenticodeThumbprints;
 
   Future<AppUpdateRelease?> checkForUpdate() async {
     final source = _fetchJson ?? _fetchLatestRelease;
@@ -172,6 +344,14 @@ class AppUpdateService {
       throw const AppUpdateException('GitHub 更新包缺少有效的 SHA-256 校验信息。');
     }
 
+    final signature = asset.signature ?? release.signature;
+    if (signature == null || signature.value.trim().isEmpty) {
+      throw const AppUpdateException('GitHub 更新包缺少有效的发布签名。');
+    }
+    if (signature.algorithm != 'ed25519') {
+      throw AppUpdateException('不支持的签名算法：${signature.algorithm}。');
+    }
+
     final descriptor = ReleaseDescriptor(
       schemaVersion: 3,
       packageId: 'local.munch.eventatlas',
@@ -187,26 +367,55 @@ class AppUpdateService {
         length: asset.size,
       ),
       install: _installMetadata(asset),
+      signature: signature,
       minimumUpdaterVersion: '2.7.0',
-      generatedAt: DateTime.now().toUtc(),
+      generatedAt: release.generatedAt,
     )..validate();
 
+    final signatureVerified = await verifyReleaseSignature(
+      descriptor: descriptor,
+      publicKeys: _pinnedPublicKeys,
+    );
+    if (!signatureVerified) {
+      throw const AppUpdateException('更新包签名校验失败或使用了未受信任的公钥。');
+    }
+
     try {
-      final staged = await DesktopUpdater().downloadZipFirstUpdate(
-        appArchiveUrl: Uri.parse(_latestReleaseUri),
-        currentVersion: DesktopVersionInfo.parse(currentVersion),
-        descriptor: descriptor,
-        onProgress: (received, total) {
-          if (total != null && total > 0) onProgress?.call(received / total);
-        },
-      );
+      final staged = _downloadUpdate != null
+          ? await _downloadUpdate(
+              appArchiveUrl: Uri.parse(_latestReleaseUri),
+              currentVersion: DesktopVersionInfo.parse(currentVersion),
+              descriptor: descriptor,
+              onProgress: (received, total) {
+                if (total != null && total > 0) {
+                  onProgress?.call(received / total);
+                }
+              },
+            )
+          : await DesktopUpdater().downloadZipFirstUpdate(
+              appArchiveUrl: Uri.parse(_latestReleaseUri),
+              currentVersion: DesktopVersionInfo.parse(currentVersion),
+              descriptor: descriptor,
+              onProgress: (received, total) {
+                if (total != null && total > 0) {
+                  onProgress?.call(received / total);
+                }
+              },
+            );
+
       onProgress?.call(1);
-      await DesktopUpdater().installUpdate(
+
+      final installer = _installUpdate ?? DesktopUpdater().installUpdate;
+      await installer(
         stagingPath: staged.stagingPath,
-        allowUnsignedMacOSUpdates: true,
+        allowUnsignedMacOSUpdates: false,
       );
     } on AppUpdateException {
       rethrow;
+    } on io.FileSystemException catch (error) {
+      throw AppUpdateException('更新包完整性校验失败：${error.message}');
+    } on StateError catch (error) {
+      throw AppUpdateException('更新校验失败：${error.message}');
     } on Object catch (error) {
       throw AppUpdateException('更新安装失败：$error');
     }
@@ -229,11 +438,11 @@ class AppUpdateService {
           strategy: 'wholeBundleReplace',
           macosDmg: ReleaseMacOSDmgInstall(
             appBundleName: 'Thing.app',
-            verifyPrimarySignature: false,
+            verifyPrimarySignature: true,
           ),
         );
       case 'innoInstaller':
-        return const ReleaseInstall(
+        return ReleaseInstall(
           strategy: 'innoInstaller',
           inno: ReleaseInnoInstall(
             silentArgs: ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
@@ -241,7 +450,10 @@ class AppUpdateService {
             logFileName: 'thing-update.log',
             relaunchAfterInstall: true,
             requiresElevation: 'auto',
-            authenticode: ReleaseAuthenticodePolicy(required: false),
+            authenticode: ReleaseAuthenticodePolicy(
+              required: true,
+              sha256Thumbprints: _pinnedAuthenticodeThumbprints,
+            ),
           ),
         );
       default:
