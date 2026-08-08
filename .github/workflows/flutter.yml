@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+env:
+  FLUTTER_VERSION: 3.32.8
+  DMGBUILD_VERSION: 1.6.5
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -30,6 +34,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
@@ -60,6 +65,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: false
 
       - name: Install dependencies
@@ -121,6 +127,12 @@ jobs:
           if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
             throw "Windows installer was not created with the expected name: $installerPath"
           }
+          $zipPath = Join-Path $PWD 'build/Thing-windows-${{ github.sha }}.zip'
+          $manifestPath = Join-Path $PWD 'build/Thing-windows-${{ github.sha }}.sha256'
+          @($zipPath, $installerPath) | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLower()
+            "$hash  $([IO.Path]::GetFileName($_))"
+          } | Set-Content -Encoding ascii $manifestPath
 
       - name: Upload Windows release artifact
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
@@ -130,11 +142,12 @@ jobs:
           path: |
             flutter/build/Thing-windows-${{ github.sha }}.zip
             flutter/build/installer/Thing-windows-*-setup.exe
+            flutter/build/Thing-windows-${{ github.sha }}.sha256
 
   windows-release:
     name: Upload Windows release
     if: github.event_name == 'workflow_dispatch'
-    needs: windows
+    needs: [windows, release-provenance, android-release-gate, macos-release-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -242,3 +255,112 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           INSTALLER_NAME: ${{ steps.prepare-release-assets.outputs.installer_name }}
         run: gh release upload "$RELEASE_TAG" "release/$INSTALLER_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+
+  release-provenance:
+    name: Release provenance gate
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify tag, version, and commit
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version: //p' flutter/pubspec.yaml | head -n1)
+          app_version=${version%%+*}
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag: $RELEASE_TAG" >&2; exit 1; }
+          [[ "${RELEASE_TAG#v}" == "$app_version" ]] || { echo "Tag/version mismatch" >&2; exit 1; }
+          ref_json=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")
+          ref_type=$(jq -r '.object.type' <<<"$ref_json")
+          ref_sha=$(jq -r '.object.sha' <<<"$ref_json")
+          [[ "$ref_type" == tag ]] && ref_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$ref_sha" --jq '.object.sha')
+          [[ "$ref_sha" == "$GITHUB_SHA" ]] || { echo "Tag points to $ref_sha, expected $GITHUB_SHA" >&2; exit 1; }
+          echo "version=$app_version" >> "$GITHUB_OUTPUT"
+          sha256sum flutter/pubspec.yaml
+
+  android-release-gate:
+    name: Android release signing gate
+    if: github.event_name == 'workflow_dispatch'
+    needs: release-provenance
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Require authorized release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [[ -n "${!value}" ]] || { echo "$value is required; refusing an unsigned Android release" >&2; exit 1; }
+          done
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > android/release.keystore
+          cat > android/key.properties <<EOF
+          storeFile=release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - run: test "$(find build/app/outputs/flutter-apk -name '*.apk' | wc -l)" -eq 1
+
+  macos-release-gate:
+    name: macOS signing and notarization gate
+    if: github.event_name == 'workflow_dispatch'
+    needs: release-provenance
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install pinned DMG builder
+        run: python3 -m pip install "dmgbuild==${DMGBUILD_VERSION}"
+      - name: Sign, notarize, staple, and verify DMG
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          VERSION: ${{ needs.release-provenance.outputs.version }}
+        run: |
+          set -euo pipefail
+          for value in MACOS_CERTIFICATE_BASE64 MACOS_CERTIFICATE_PASSWORD MACOS_CODESIGN_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            [[ -n "${!value}" ]] || { echo "$value is required; refusing an unsigned or unnotarized macOS release" >&2; exit 1; }
+          done
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$keychain"
+          security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_CERTIFICATE_PASSWORD" "$keychain"
+          scripts/package-macos-dmg.sh "flutter/build/Thing-macOS-v$VERSION.dmg"
+          app=flutter/build/macos/Build/Products/Release/Thing.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --verbose=4 "$app" 2>&1 | grep -q 'flags=0x10000(runtime)'
+          xcrun notarytool submit "flutter/build/Thing-macOS-v$VERSION.dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "flutter/build/Thing-macOS-v$VERSION.dmg"
+          xcrun stapler validate "flutter/build/Thing-macOS-v$VERSION.dmg"
+          shasum -a 256 "flutter/build/Thing-macOS-v$VERSION.dmg"

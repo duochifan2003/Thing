@@ -6,6 +6,7 @@ flutter_dir="$repo_root/flutter"
 version=$(sed -n 's/^version: //p' "$flutter_dir/pubspec.yaml" | head -n 1)
 app_version=${version%%+*}
 app_build=${version#*+}
+codesign_identity=${MACOS_CODESIGN_IDENTITY:?MACOS_CODESIGN_IDENTITY is required for a release DMG}
 output=${1:-"$flutter_dir/build/Thing-macOS-v$app_version.dmg"}
 stage=$(mktemp -d "${TMPDIR:-/tmp}/thing-dmg.XXXXXX")
 
@@ -17,13 +18,14 @@ trap cleanup EXIT
 mkdir -p "$(dirname "$output")"
 cd "$flutter_dir"
 flutter build macos --release --no-pub \
+  --codesign-identity="$codesign_identity" \
   --dart-define=APP_VERSION="$app_version" \
   --dart-define=APP_BUILD="$app_build"
 swift "$repo_root/scripts/create-macos-dmg-background.swift" \
   "$stage/installation-guide.png"
 
-if ! python3 -c 'import dmgbuild' >/dev/null 2>&1; then
-  echo "Missing dmgbuild. Install it with: python3 -m pip install --user dmgbuild" >&2
+if ! python3 -c 'from importlib.metadata import version; assert version("dmgbuild") == "1.6.5"' >/dev/null 2>&1; then
+  echo "dmgbuild==1.6.5 is required" >&2
   exit 1
 fi
 
