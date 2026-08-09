@@ -1,0 +1,181 @@
+name: Public unsigned assets
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing source release tag to receive unsigned assets
+        required: true
+        type: string
+      source_ref:
+        description: Exact commit to build and verify against the release tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.44.8
+
+jobs:
+  windows:
+    name: Windows unsigned packages
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.event.pull_request.head.sha }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: false
+      - run: flutter pub get
+      - name: Build unsigned Windows app
+        shell: pwsh
+        run: |
+          $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
+          $appVersion, $appBuild = $version -split '\+', 2
+          flutter build windows --release "--dart-define=APP_VERSION=$appVersion" "--dart-define=APP_BUILD=$appBuild"
+          Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath "build/Thing-windows-v$appVersion.zip"
+      - name: Build unsigned Windows installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim().Split('+')[0]
+          & $iscc "/DAppVersion=$version" windows/installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-windows
+          path: |
+            flutter/build/Thing-windows-v*.zip
+            flutter/build/installer/Thing-windows-v*-setup.exe
+
+  macos:
+    name: macOS unsigned packages
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.event.pull_request.head.sha }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+      - run: flutter pub get
+        working-directory: flutter
+      - name: Build unsigned macOS app, ZIP, and DMG
+        working-directory: flutter
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+          CODE_SIGNING_REQUIRED: "NO"
+        run: |
+          version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
+          app_version=${version%%+*}
+          app_build=${version#*+}
+          sed -i.bak \
+            -e 's/CODE_SIGN_IDENTITY = "Apple Development";/CODE_SIGN_IDENTITY = "-";/g' \
+            -e 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' \
+            -e '/DEVELOPMENT_TEAM = /d' \
+            macos/Runner.xcodeproj/project.pbxproj
+          flutter build macos --release \
+            --dart-define=APP_VERSION="$app_version" \
+            --dart-define=APP_BUILD="$app_build"
+          app_dir=build/macos/Build/Products/Release/Thing.app
+          ditto -c -k --sequesterRsrc --keepParent "$app_dir" "build/Thing-macOS-v$app_version.zip"
+          hdiutil create -volname "Thing Installer" -srcfolder "$app_dir" \
+            -ov -format UDZO "build/Thing-macOS-v$app_version.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-macos
+          path: |
+            flutter/build/Thing-macOS-v*.zip
+            flutter/build/Thing-macOS-v*.dmg
+
+  android:
+    name: Android unsigned APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.event.pull_request.head.sha }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - name: Build unsigned APK
+        env:
+          ORG_GRADLE_PROJECT_publicUnsigned: "true"
+        run: |
+          version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
+          app_version=${version%%+*}
+          flutter build apk --release \
+            --dart-define=APP_VERSION="$app_version" \
+            --dart-define=APP_BUILD="${version#*+}"
+          apk=$(find build/app/outputs/apk/release -maxdepth 1 -name '*unsigned.apk' -print -quit)
+          test -n "$apk"
+          cp "$apk" \
+            "build/Thing-android-v${app_version}-unsigned.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-android
+          path: flutter/build/Thing-android-v*-unsigned.apk
+
+  publish:
+    name: Upload public unsigned assets
+    if: github.event_name == 'workflow_dispatch'
+    needs: [windows, macos, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: public-*
+          path: release
+          merge-multiple: true
+      - name: Verify release target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          ref_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.type')" == tag ]]; then
+            ref_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$ref_sha" --jq '.object.sha')
+          fi
+          [[ "$ref_sha" == "$SOURCE_REF" ]] || {
+            echo "Release tag $RELEASE_TAG points to $ref_sha, expected $SOURCE_REF" >&2
+            exit 1
+          }
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+      - name: Rename and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          version=${RELEASE_TAG#v}
+          mv release/Thing-windows-v"$version".zip release/Thing-windows-"$RELEASE_TAG".zip
+          gh release upload "$RELEASE_TAG" \
+            release/Thing-macOS-v"$version".dmg \
+            release/Thing-macOS-v"$version".zip \
+            release/Thing-windows-"$RELEASE_TAG".zip \
+            release/Thing-windows-v"$version"-setup.exe \
+            release/Thing-android-v"$version"-unsigned.apk \
+            --repo "$GITHUB_REPOSITORY"
