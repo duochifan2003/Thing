@@ -173,11 +173,23 @@ jobs:
         run: |
           set -euo pipefail
           version=${RELEASE_TAG#v}
-          mv release/Thing-windows-v"$version".zip release/Thing-windows-"$RELEASE_TAG".zip
+          find_asset() {
+            find release -type f -name "$1" -print -quit
+          }
+          windows_zip=$(find_asset "Thing-windows-v${version}.zip")
+          windows_setup=$(find_asset "Thing-windows-v${version}-setup.exe")
+          test -n "$windows_zip" -a -n "$windows_setup"
+          if [[ "$windows_zip" != release/Thing-windows-"$RELEASE_TAG".zip ]]; then
+            mv "$windows_zip" release/Thing-windows-"$RELEASE_TAG".zip
+          fi
+          if [[ "$windows_setup" != release/Thing-windows-v"$version"-setup.exe ]]; then
+            mv "$windows_setup" release/Thing-windows-v"$version"-setup.exe
+          fi
           gh release upload "$RELEASE_TAG" \
             release/Thing-macOS-v"$version".dmg \
             release/Thing-macOS-v"$version".zip \
             release/Thing-windows-"$RELEASE_TAG".zip \
             release/Thing-windows-v"$version"-setup.exe \
             release/Thing-android-v"$version"-unsigned.apk \
+            --clobber \
             --repo "$GITHUB_REPOSITORY"
