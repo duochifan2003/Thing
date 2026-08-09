@@ -212,7 +212,7 @@ class AppUpdateService {
     final descriptor = ReleaseDescriptor(
       schemaVersion: 3,
       packageId: 'local.munch.eventatlas',
-      appName: 'Thing',
+      appName: operatingSystem == 'macos' ? 'Thing.app' : 'Thing',
       version: release.version,
       buildNumber: null,
       platform: operatingSystem,

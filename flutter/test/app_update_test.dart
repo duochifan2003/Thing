@@ -383,7 +383,7 @@ SHA256(Thing-linux.zip) = dddddddddddddddddddddddddddddddddddddddddddddddddddddd
     });
 
     test(
-      'downloads and requests install on macOS with allowUnsignedMacOSUpdates=true',
+      'downloads and requests install on macOS with DMG package (allowUnsignedMacOSUpdates=true)',
       () async {
         final fakeUpdater = FakeDesktopUpdater();
         int? exitedWith;
@@ -424,10 +424,68 @@ SHA256(Thing-linux.zip) = dddddddddddddddddddddddddddddddddddddddddddddddddddddd
         expect(exitedWith, 0);
         expect(reportedProgress, 1.0);
         expect(fakeUpdater.lastDescriptor?.platform, 'macos');
+        expect(fakeUpdater.lastDescriptor?.appName, 'Thing.app');
         expect(fakeUpdater.lastDescriptor?.artifact.kind, 'dmg');
+        expect(
+          fakeUpdater.lastDescriptor?.install.macosDmg?.appBundleName,
+          'Thing.app',
+        );
         expect(
           fakeUpdater.lastDescriptor?.install.macosDmg?.verifyPrimarySignature,
           isFalse,
+        );
+        expect(fakeUpdater.lastAllowUnsignedMacOSUpdates, isTrue);
+        expect(fakeUpdater.lastStagedPath, '/fake/staging/path');
+      },
+    );
+
+    test(
+      'downloads and requests install on macOS with ZIP-only package (allowUnsignedMacOSUpdates=true, appName=Thing.app)',
+      () async {
+        final fakeUpdater = FakeDesktopUpdater();
+        int? exitedWith;
+        double? reportedProgress;
+        final service = AppUpdateService(
+          currentVersion: '0.1.0',
+          operatingSystem: 'macos',
+          exitApp: (code) {
+            exitedWith = code;
+            throw 'exited_$code';
+          },
+          desktopUpdater: fakeUpdater,
+        );
+
+        final release = AppUpdateRelease.fromJson(
+          _releaseJson(
+            assets: [
+              _assetJson(
+                'Thing-macOS-v0.1.19.zip',
+                size: 25440124,
+                digest:
+                    'sha256:5428b616a0cc4981be6dd0d203ce6f2389d5fc54e51d9958064aadbfe198a4f6',
+              ),
+            ],
+          ),
+        );
+
+        expect(
+          service.downloadAndInstall(
+            release,
+            onProgress: (p) => reportedProgress = p,
+          ),
+          throwsA('exited_0'),
+        );
+
+        await pumpEventQueue();
+
+        expect(exitedWith, 0);
+        expect(reportedProgress, 1.0);
+        expect(fakeUpdater.lastDescriptor?.platform, 'macos');
+        expect(fakeUpdater.lastDescriptor?.appName, 'Thing.app');
+        expect(fakeUpdater.lastDescriptor?.artifact.kind, 'zip');
+        expect(
+          fakeUpdater.lastDescriptor?.install.strategy,
+          'wholeDirectoryReplace',
         );
         expect(fakeUpdater.lastAllowUnsignedMacOSUpdates, isTrue);
         expect(fakeUpdater.lastStagedPath, '/fake/staging/path');
