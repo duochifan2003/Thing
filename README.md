@@ -188,7 +188,7 @@ flutter build apk --debug
 
 ## 发布规则
 
-- Flutter 版本写在 `flutter/pubspec.yaml`，格式为 `主版本.次版本.修订号+构建号`。
+- Flutter 版本单一来源写在 `flutter/pubspec.yaml`，格式为 `主版本.次版本.修订号+构建号`；构建 Release 包时由 CI/脚本通过 `--dart-define=APP_VERSION` 和 `--dart-define=APP_BUILD` 统一注入版本。
 - GitHub Release 使用 `v主版本.次版本.修订号` 标签，例如 `v0.1.6`。
 - `main` 是唯一有效代码来源，合并前必须通过 `test` 和 Windows 构建检查。
 - macOS DMG 在 macOS 环境构建；Windows ZIP 由 GitHub Actions Windows runner 构建并上传到 Release。
