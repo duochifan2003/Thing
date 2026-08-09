@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.21"
+  #error AppVersion must be supplied from flutter/pubspec.yaml
 #endif
 
 #define AppName "Thing"
