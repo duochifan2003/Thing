@@ -173,7 +173,6 @@ jobs:
         run: |
           set -euo pipefail
           version=${RELEASE_TAG#v}
-          mv release/Thing-windows-v"$version".zip release/Thing-windows-"$RELEASE_TAG".zip
           gh release upload "$RELEASE_TAG" \
             release/Thing-macOS-v"$version".dmg \
             release/Thing-macOS-v"$version".zip \
