@@ -71,6 +71,15 @@ PY
 
 app="$flutter_dir/build/macos/Build/Products/Release/Thing.app"
 codesign --verify --deep --strict --verbose=2 "$app"
+codesign_info=$(codesign -dvv "$app" 2>&1)
+printf '%s\n' "$codesign_info" | grep -F 'Authority=Developer ID Application' >/dev/null || {
+  echo 'macOS release is not signed by a Developer ID Application certificate' >&2
+  exit 1
+}
+printf '%s\n' "$codesign_info" | grep -E 'flags=.*runtime' >/dev/null || {
+  echo 'macOS release is missing the hardened runtime' >&2
+  exit 1
+}
 spctl --assess --type execute --verbose=4 "$app"
 xcrun notarytool submit "$output" --keychain-profile "$MACOS_NOTARY_PROFILE" --wait
 xcrun stapler staple "$output"
