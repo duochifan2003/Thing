@@ -74,11 +74,14 @@ jobs:
         working-directory: flutter
       - name: Build unsigned macOS app, ZIP, and DMG
         working-directory: flutter
+        env:
+          CODE_SIGNING_ALLOWED: "NO"
+          CODE_SIGNING_REQUIRED: "NO"
         run: |
           version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
           app_version=${version%%+*}
           app_build=${version#*+}
-          flutter build macos --release --no-codesign \
+          flutter build macos --release \
             --dart-define=APP_VERSION="$app_version" \
             --dart-define=APP_BUILD="$app_build"
           app_dir=build/macos/Build/Products/Release/Thing.app
