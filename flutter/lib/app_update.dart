@@ -1,7 +1,12 @@
+// The package's public facade does not expose the verifier-injected client.
+// ignore_for_file: implementation_imports
+
 import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:desktop_updater/desktop_updater.dart';
+import 'package:desktop_updater/src/core/artifact_verifier.dart';
+import 'package:desktop_updater/src/core/update_client.dart';
 
 const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.0.0');
 const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '0');
@@ -10,6 +15,14 @@ const appVersionLabel = 'v$appVersion+$appBuild';
 const _repository = 'duochifan2003/Thing';
 const _latestReleaseUri =
     'https://api.github.com/repos/$_repository/releases/latest';
+const _releasePublicKeys = <String, String>{
+  'thing-release-2026': 'F8StqUP00kf8pEYryudkPDrODjV/5fN7X6yuBlquMgI=',
+};
+final _releaseVerifier = ArtifactVerifier(
+  policy: ArtifactVerificationPolicy.requireEd25519Signature(
+    publicKeys: _releasePublicKeys,
+  ),
+);
 
 typedef UpdateProgress = void Function(double value);
 typedef UpdateJsonFetcher = Future<String> Function(Uri uri);
@@ -45,6 +58,7 @@ class AppUpdateRelease {
     required this.htmlUrl,
     required this.notes,
     required this.assets,
+    this.descriptorUrls = const {},
   });
 
   final String version;
@@ -52,6 +66,9 @@ class AppUpdateRelease {
   final Uri htmlUrl;
   final String notes;
   final List<AppUpdateAsset> assets;
+  final Map<String, Uri> descriptorUrls;
+
+  Uri? descriptorUrlFor(AppUpdateAsset asset) => descriptorUrls[asset.name];
 
   AppUpdateAsset? assetFor(String operatingSystem) {
     final candidates = assets.where((asset) {
@@ -90,6 +107,7 @@ class AppUpdateRelease {
       throw const FormatException('GitHub 更新地址无效。');
     }
     final assets = <AppUpdateAsset>[];
+    final descriptorUrls = <String, Uri>{};
     final rawAssets = json['assets'];
     if (rawAssets is List) {
       for (final rawAsset in rawAssets) {
@@ -99,6 +117,14 @@ class AppUpdateRelease {
         if (name is! String || downloadUrl is! String) continue;
         final uri = Uri.tryParse(downloadUrl);
         if (uri == null || !_isAllowedGitHubUri(uri)) continue;
+        if (name.endsWith('.release.json')) {
+          descriptorUrls[name.substring(
+                0,
+                name.length - '.release.json'.length,
+              )] =
+              uri;
+          continue;
+        }
         final digest = rawAsset['digest'];
         assets.add(
           AppUpdateAsset(
@@ -118,6 +144,7 @@ class AppUpdateRelease {
       htmlUrl: releaseUrl,
       notes: json['body'] is String ? json['body'] as String : '',
       assets: assets,
+      descriptorUrls: descriptorUrls,
     );
   }
 }
@@ -169,38 +196,43 @@ class AppUpdateService {
       throw const AppUpdateException('GitHub 更新包缺少有效的 SHA-256 校验信息。');
     }
 
-    final descriptor = ReleaseDescriptor(
-      schemaVersion: 3,
-      packageId: 'local.munch.eventatlas',
-      appName: 'Thing',
-      version: release.version,
-      buildNumber: null,
-      platform: operatingSystem,
-      channel: 'stable',
-      artifact: ReleaseArtifact(
-        kind: _artifactKind(asset),
-        url: asset.downloadUrl,
-        sha256: asset.sha256,
-        length: asset.size,
-      ),
-      install: _installMetadata(asset),
-      minimumUpdaterVersion: '2.7.0',
-      generatedAt: DateTime.now().toUtc(),
-    )..validate();
+    final descriptorUrl = release.descriptorUrlFor(asset);
+    if (descriptorUrl == null) {
+      throw const AppUpdateException('GitHub 更新包缺少逐资产 release descriptor。');
+    }
+    final source = _fetchJson ?? _fetchLatestRelease;
+    final rawDescriptor = await source(descriptorUrl);
+    final descriptor = ReleaseDescriptor.fromJson(
+      jsonDecode(rawDescriptor) as Map<String, dynamic>,
+    );
+    await _releaseVerifier.verifyDescriptor(descriptor);
+    if (descriptor.version != release.version ||
+        descriptor.platform != operatingSystem ||
+        descriptor.channel != 'stable' ||
+        descriptor.artifact.url != asset.downloadUrl ||
+        descriptor.artifact.sha256 != asset.sha256 ||
+        descriptor.artifact.length != asset.size) {
+      throw const AppUpdateException('GitHub release descriptor 与资产不一致。');
+    }
 
     try {
-      final staged = await DesktopUpdater().downloadZipFirstUpdate(
-        appArchiveUrl: Uri.parse(_latestReleaseUri),
-        currentVersion: DesktopVersionInfo.parse(currentVersion),
-        descriptor: descriptor,
-        onProgress: (received, total) {
-          if (total != null && total > 0) onProgress?.call(received / total);
-        },
-      );
+      final staged =
+          await UpdateClient(
+            appArchiveUrl: Uri.parse(_latestReleaseUri),
+            currentVersion: DesktopVersionInfo.parse(currentVersion),
+            verifier: _releaseVerifier,
+          ).downloadVerifyAndStage(
+            descriptor: descriptor,
+            onProgress: (received, total) {
+              if (total != null && total > 0) {
+                onProgress?.call(received / total);
+              }
+            },
+          );
       onProgress?.call(1);
       await DesktopUpdater().installUpdate(
         stagingPath: staged.stagingPath,
-        allowUnsignedMacOSUpdates: true,
+        allowUnsignedMacOSUpdates: false,
       );
     } on AppUpdateException {
       rethrow;
@@ -208,42 +240,6 @@ class AppUpdateService {
       throw AppUpdateException('更新安装失败：$error');
     }
     _exitApp(0);
-  }
-
-  String _artifactKind(AppUpdateAsset asset) {
-    final name = asset.name.toLowerCase();
-    if (operatingSystem == 'macos' && name.endsWith('.dmg')) return 'dmg';
-    if (operatingSystem == 'windows' && name.endsWith('.exe')) {
-      return 'innoInstaller';
-    }
-    return 'zip';
-  }
-
-  ReleaseInstall _installMetadata(AppUpdateAsset asset) {
-    switch (_artifactKind(asset)) {
-      case 'dmg':
-        return const ReleaseInstall(
-          strategy: 'wholeBundleReplace',
-          macosDmg: ReleaseMacOSDmgInstall(
-            appBundleName: 'Thing.app',
-            verifyPrimarySignature: false,
-          ),
-        );
-      case 'innoInstaller':
-        return const ReleaseInstall(
-          strategy: 'innoInstaller',
-          inno: ReleaseInnoInstall(
-            silentArgs: ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
-            inheritInstallDirectory: true,
-            logFileName: 'thing-update.log',
-            relaunchAfterInstall: true,
-            requiresElevation: 'auto',
-            authenticode: ReleaseAuthenticodePolicy(required: false),
-          ),
-        );
-      default:
-        return const ReleaseInstall(strategy: 'wholeDirectoryReplace');
-    }
   }
 
   Future<String> _fetchLatestRelease(Uri uri) async {

@@ -53,18 +53,20 @@ jobs:
         env:
           IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+          DESCRIPTOR_KEY: ${{ secrets.DESKTOP_UPDATER_RELEASE_PRIVATE_KEY }}
         run: |
-          test -n "$IDENTITY" -a -n "$NOTARY_PROFILE" || {
-            echo 'macOS publication is blocked: Developer ID and notarization credentials are required.' >&2
+          test -n "$IDENTITY" -a -n "$NOTARY_PROFILE" -a -n "$DESCRIPTOR_KEY" || {
+            echo 'macOS publication is blocked: Developer ID, notarization, and descriptor signing credentials are required.' >&2
             exit 1
           }
       - name: Block Windows publication without Authenticode
         env:
           CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
           PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          DESCRIPTOR_KEY: ${{ secrets.DESKTOP_UPDATER_RELEASE_PRIVATE_KEY }}
         run: |
-          test -n "$CERTIFICATE" -a -n "$PASSWORD" || {
-            echo 'Windows publication is blocked: Authenticode credentials are required.' >&2
+          test -n "$CERTIFICATE" -a -n "$PASSWORD" -a -n "$DESCRIPTOR_KEY" || {
+            echo 'Windows publication is blocked: Authenticode and descriptor signing credentials are required.' >&2
             exit 1
           }
 
@@ -137,6 +139,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.publish_macos
     needs: [test, release-gates]
     runs-on: macos-14
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
@@ -153,10 +157,34 @@ jobs:
           MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
           DMGBUILD_VERSION: ${{ env.DMGBUILD_VERSION }}
         run: scripts/package-macos-dmg.sh
+      - name: Write and sign macOS release descriptor
+        working-directory: flutter
+        env:
+          DESKTOP_UPDATER_RELEASE_PRIVATE_KEY: ${{ secrets.DESKTOP_UPDATER_RELEASE_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
+          app_version=${version%%+*}
+          app_build=${version#*+}
+          dmg=$(find build -name 'Thing-macOS-v*.dmg' -type f -print -quit)
+          test -n "$dmg" || { echo 'macOS DMG was not produced' >&2; exit 1; }
+          python3 ../scripts/write-release-descriptor.py \
+            --platform macos --version "$app_version" --build-number "$app_build" \
+            --url "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$(basename "$dmg")" \
+            --sha256 "$(shasum -a 256 "$dmg" | awk '{print $1}')" --length "$(stat -f %z "$dmg")" \
+            --kind dmg --output "$dmg.release.json"
+          dart run desktop_updater:release sign --release "$dmg.release.json" --public-key-id thing-release-2026 --private-key-env DESKTOP_UPDATER_RELEASE_PRIVATE_KEY
       - uses: actions/upload-artifact@v4
         with:
           name: Thing-macos-${{ github.sha }}
-          path: flutter/build/Thing-macOS-v*.dmg
+          path: |
+            flutter/build/Thing-macOS-v*.dmg
+            flutter/build/Thing-macOS-v*.dmg.release.json
+      - name: Upload macOS asset and descriptor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" build/Thing-macOS-v*.dmg build/Thing-macOS-v*.dmg.release.json --repo "${{ github.repository }}"
 
   windows:
     name: Windows build
@@ -191,8 +219,11 @@ jobs:
 
       - name: Write build provenance
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
+          gh api "repos/${{ github.repository }}/commits/main" --jq '.sha' | Set-Content build/canonical-main.txt -NoNewline
           if ('${{ inputs.release_tag }}' -and '${{ inputs.release_tag }}' -ne "v$($version.Split('+')[0])") {
             throw "Release tag must equal pubspec version: expected v$($version.Split('+')[0])"
           }
@@ -208,6 +239,27 @@ jobs:
           if (-not (Test-Path -LiteralPath $appPath -PathType Leaf)) {
             throw "Windows executable was not found: $appPath"
           }
+
+      - name: Sign Windows executable before packaging
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $pfx = Join-Path $PWD 'build/signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE))
+          $exe = Get-Item 'build/windows/x64/runner/Release/Thing.exe'
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Select-Object -First 1).FullName
+          if (-not $signtool) { throw 'signtool.exe was not found.' }
+          & $signtool sign /fd SHA256 /f $pfx /p $env:WINDOWS_SIGNING_PASSWORD /tr http://timestamp.digicert.com /td SHA256 $exe.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $verification = (& $signtool verify /pa /all /v $exe.FullName 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) { throw 'Windows executable Authenticode verification failed.' }
+          $thumbprint = [regex]::Match($verification, 'Cert Hash\(sha256\):\s*([0-9A-Fa-f]{64})').Groups[1].Value.ToLower()
+          if ($thumbprint.Length -ne 64) { throw 'Signed executable SHA-256 certificate thumbprint was not reported.' }
+          Set-Content -Path 'build/windows-signing-thumbprint.txt' -Value $thumbprint -NoNewline
+          Remove-Item -Force $pfx
 
       - name: Package Windows release
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
@@ -261,9 +313,30 @@ jobs:
           if (-not $signtool) { throw 'signtool.exe was not found.' }
           & $signtool sign /fd SHA256 /f $pfx /p $env:WINDOWS_SIGNING_PASSWORD /tr http://timestamp.digicert.com /td SHA256 $installer.FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $signtool verify /pa /all $installer.FullName
+          $verification = (& $signtool verify /pa /all /v $installer.FullName 2>&1 | Out-String)
           if ($LASTEXITCODE -ne 0) { throw 'Windows installer Authenticode verification failed.' }
+          $thumbprint = [regex]::Match($verification, 'Cert Hash\(sha256\):\s*([0-9A-Fa-f]{64})').Groups[1].Value.ToLower()
+          if ($thumbprint.Length -ne 64) { throw 'Signed installer SHA-256 certificate thumbprint was not reported.' }
+          if ($thumbprint -ne (Get-Content 'build/windows-signing-thumbprint.txt').Trim()) { throw 'Windows executable and installer signer thumbprints differ.' }
           Remove-Item -Force $pfx
+
+      - name: Write and sign Windows release descriptors
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          DESKTOP_UPDATER_RELEASE_PRIVATE_KEY: ${{ secrets.DESKTOP_UPDATER_RELEASE_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
+          $appVersion, $appBuild = $version -split '\+', 2
+          $baseUrl = "https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG"
+          $zip = Get-Item "build/Thing-windows-${{ github.sha }}.zip"
+          $installer = Get-Item 'build/installer/Thing-windows-*-setup.exe'
+          $common = @('--platform', 'windows', '--version', $appVersion, '--build-number', $appBuild, '--windows-thumbprint', (Get-Content 'build/windows-signing-thumbprint.txt').Trim())
+          python ..\scripts\write-release-descriptor.py @common --url "$baseUrl/Thing-windows-$env:RELEASE_TAG.zip" --sha256 (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() --length $zip.Length --kind zip --output "build/Thing-windows-$env:RELEASE_TAG.zip.release.json"
+          python ..\scripts\write-release-descriptor.py @common --url "$baseUrl/$($installer.Name)" --sha256 (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower() --length $installer.Length --kind innoInstaller --output "build/$($installer.Name).release.json"
+          dart run desktop_updater:release sign --release "build/Thing-windows-$env:RELEASE_TAG.zip.release.json" --public-key-id thing-release-2026 --private-key-env DESKTOP_UPDATER_RELEASE_PRIVATE_KEY
+          dart run desktop_updater:release sign --release "build/$($installer.Name).release.json" --public-key-id thing-release-2026 --private-key-env DESKTOP_UPDATER_RELEASE_PRIVATE_KEY
 
       - name: Write and hash release provenance
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
@@ -279,7 +352,7 @@ jobs:
             $path = if ($item.Directory.Name -eq 'installer') { "installer/$($item.Name)" } else { $item.Name }
             @{ path = $path; bytes = $item.Length; sha256 = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower() }
           })
-          @{ repository = $env:GITHUB_REPOSITORY; commit = $env:GITHUB_SHA; canonical_main = $env:GITHUB_SHA; version = $version; release_tag = "${{ inputs.release_tag }}"; assets = $assets } |
+          @{ repository = $env:GITHUB_REPOSITORY; commit = $env:GITHUB_SHA; canonical_main = (Get-Content build/canonical-main.txt).Trim(); version = $version; release_tag = "${{ inputs.release_tag }}"; assets = $assets } |
             ConvertTo-Json -Depth 5 -Compress | Set-Content build/release-provenance.json
 
       - name: Upload Windows release artifact
@@ -291,6 +364,7 @@ jobs:
             flutter/build/Thing-windows-${{ github.sha }}.zip
             flutter/build/installer/Thing-windows-*-setup.exe
             flutter/build/release-provenance.json
+            flutter/build/*.release.json
 
   windows-release:
     name: Upload Windows release
@@ -435,6 +509,14 @@ jobs:
               exit 1
             }
           done < <(jq -r '.assets[] | [.path, .sha256] | @tsv' release/release-provenance.json)
+          descriptors=(release/*.release.json)
+          [[ ${#descriptors[@]} -eq 2 ]] || { echo 'Expected one signed schema-3 descriptor per Windows asset' >&2; exit 1; }
+          for descriptor in "${descriptors[@]}"; do
+            jq -e '.schemaVersion == 3 and .signature.algorithm == "ed25519" and (.signature.value | length > 0) and .signature.publicKeyId == "thing-release-2026"' "$descriptor" >/dev/null || {
+              echo "Invalid or unsigned schema-3 descriptor: $descriptor" >&2
+              exit 1
+            }
+          done
           [[ "$installer_name" =~ ^Thing-windows-v[0-9]+\.[0-9]+\.[0-9]+-setup\.exe$ ]] || {
             echo "Windows installer to upload has an unexpected name: $installer_name" >&2
             exit 1
@@ -452,3 +534,9 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           INSTALLER_NAME: ${{ steps.prepare-release-assets.outputs.installer_name }}
         run: gh release upload "$RELEASE_TAG" "release/$INSTALLER_NAME" --repo "$GITHUB_REPOSITORY"
+
+      - name: Upload Windows release descriptors
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" release/*.release.json --repo "$GITHUB_REPOSITORY"
