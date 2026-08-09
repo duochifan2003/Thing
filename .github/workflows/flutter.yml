@@ -127,10 +127,12 @@ jobs:
       - name: Reject debug signing
         run: |
           apksigner verify --verbose build/app/outputs/flutter-apk/app-release.apk
-          apksigner verify --print-certs build/app/outputs/flutter-apk/app-release.apk | grep -qv 'CN=Android Debug' || {
+          certs="$(apksigner verify --print-certs build/app/outputs/flutter-apk/app-release.apk)"
+          printf '%s\n' "$certs"
+          if printf '%s\n' "$certs" | grep -Fq 'CN=Android Debug'; then
             echo 'Android release is debug-signed' >&2
             exit 1
-          }
+          fi
 
   macos-release:
     name: macOS signed and notarized release
@@ -270,16 +272,17 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
-          $files = @(
-            "build/Thing-windows-${{ github.sha }}.zip",
-            (Get-ChildItem build/installer/Thing-windows-*-setup.exe).FullName
+          $sourceZipName = "Thing-windows-${{ github.sha }}.zip"
+          $releaseTag = "${{ inputs.release_tag }}"
+          $releaseZipName = if ($releaseTag) { "Thing-windows-$releaseTag.zip" } else { $sourceZipName }
+          $zipPath = "build/$sourceZipName"
+          $installer = Get-ChildItem build/installer/Thing-windows-*-setup.exe | Select-Object -First 1
+          $assets = @(
+            @{ path = $releaseZipName; source_path = $sourceZipName; bytes = (Get-Item $zipPath).Length; sha256 = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower() },
+            @{ path = $installer.Name; source_path = "installer/$($installer.Name)"; bytes = $installer.Length; sha256 = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower() }
           )
-          $assets = @($files | ForEach-Object {
-            $item = Get-Item $_
-            $path = if ($item.Directory.Name -eq 'installer') { "installer/$($item.Name)" } else { $item.Name }
-            @{ path = $path; bytes = $item.Length; sha256 = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower() }
-          })
-          @{ repository = $env:GITHUB_REPOSITORY; commit = $env:GITHUB_SHA; canonical_main = $env:GITHUB_SHA; version = $version; release_tag = "${{ inputs.release_tag }}"; assets = $assets } |
+          $canonicalMain = if ($env:GITHUB_REF -eq 'refs/heads/main') { $env:GITHUB_SHA } else { '' }
+          @{ repository = $env:GITHUB_REPOSITORY; commit = $env:GITHUB_SHA; canonical_main = $canonicalMain; version = $version; release_tag = $releaseTag; assets = $assets } |
             ConvertTo-Json -Depth 5 -Compress | Set-Content build/release-provenance.json
 
       - name: Upload Windows release artifact
@@ -318,6 +321,10 @@ jobs:
           [[ -n "$provenance" ]] || { echo 'Missing build provenance manifest' >&2; exit 1; }
           [[ "$(jq -r .commit "$provenance")" == "$GITHUB_SHA" ]] || {
             echo 'Build provenance commit does not match the release commit' >&2
+            exit 1
+          }
+          [[ "$(jq -r .canonical_main "$provenance")" == "$GITHUB_SHA" ]] || {
+            echo 'Build provenance was not produced from canonical main' >&2
             exit 1
           }
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -427,7 +434,6 @@ jobs:
           }
           while IFS=$'\t' read -r asset expected; do
             asset_path="release/$asset"
-            [[ -f "$asset_path" ]] || asset_path="release/${asset#installer/}"
             [[ -f "$asset_path" ]] || { echo "Provenance asset is missing: $asset" >&2; exit 1; }
             actual=$(sha256sum "$asset_path" | cut -d' ' -f1)
             [[ "$actual" == "$expected" ]] || {
