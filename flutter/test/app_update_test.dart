@@ -5,6 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography_plus/cryptography_plus.dart';
 import 'package:desktop_updater/desktop_updater.dart';
+import 'package:desktop_updater/desktop_updater_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:person_event_atlas/app_update.dart';
 
@@ -138,6 +139,30 @@ void main() {
     );
   });
 
+  test('parses release signatures from body with single signature object', () {
+    final release = AppUpdateRelease.fromJson({
+      'tag_name': 'v0.1.5',
+      'html_url': 'https://github.com/duochifan2003/Thing/releases/tag/v0.1.5',
+      'body': '''
+```json
+{
+  "signature": {
+    "algorithm": "ed25519",
+    "publicKeyId": "thing-release-2026",
+    "value": "top-level-signed"
+  }
+}
+```
+''',
+      'assets': [_assetJson('Thing-windows-v0.1.5.zip', size: 4)],
+    });
+
+    expect(
+      release.assetFor('windows')?.signature?.publicKeyId,
+      'thing-release-2026',
+    );
+  });
+
   test(
     'downloads a signed installer, verifies it, then hands it to install',
     () async {
@@ -178,6 +203,205 @@ void main() {
         if (installedPath != null) {
           await io.Directory(installedPath!).delete(recursive: true);
         }
+      }
+    },
+  );
+
+  test(
+    'downloads and stages update, executing DesktopUpdater production installUpdate handoff',
+    () async {
+      final bytes = _zipBytes();
+      final server = await _ArtifactServer.start(bytes);
+      final fakePlatform = _FakeDesktopUpdaterPlatform();
+      final originalPlatform = DesktopUpdaterPlatform.instance;
+      DesktopUpdaterPlatform.instance = fakePlatform;
+      try {
+        final trustedKey = await _keyPair(_trustedSeed);
+        final release = await _windowsRelease(
+          downloadUrl: server.uri,
+          expectedBytes: bytes,
+          signingKey: trustedKey,
+        );
+        final service = await _service(trustedKey);
+
+        await expectLater(
+          service.downloadAndInstall(release),
+          throwsA(isA<_ExitException>()),
+        );
+
+        expect(server.requests, 1);
+        expect(fakePlatform.installCalls, 1);
+        expect(fakePlatform.allowUnsignedMacOSUpdates, isFalse);
+        expect(fakePlatform.installedStagingPath, isNotNull);
+        final stagedPath = fakePlatform.installedStagingPath!;
+        expect(io.File('$stagedPath/Thing.exe').readAsStringSync(), 'test');
+        final manifestFile = io.File(
+          '$stagedPath/.desktop_updater_release_manifest.json',
+        );
+        expect(manifestFile.existsSync(), isTrue);
+        final manifestJson = jsonDecode(manifestFile.readAsStringSync());
+        expect(manifestJson['appName'], 'Thing');
+        expect(manifestJson['version'], '0.1.28');
+        expect(manifestJson['install']['strategy'], 'wholeDirectoryReplace');
+      } finally {
+        DesktopUpdaterPlatform.instance = originalPlatform;
+        await server.close();
+        if (fakePlatform.installedStagingPath != null) {
+          await io.Directory(
+            fakePlatform.installedStagingPath!,
+          ).delete(recursive: true);
+        }
+      }
+    },
+  );
+
+  test(
+    'stages Inno installer with Authenticode requirement and pinned thumbprints',
+    () async {
+      final bytes = <int>[1, 2, 3, 4, 5];
+      final server = await _ArtifactServer.start(bytes);
+      final fakePlatform = _FakeDesktopUpdaterPlatform();
+      final originalPlatform = DesktopUpdaterPlatform.instance;
+      DesktopUpdaterPlatform.instance = fakePlatform;
+      try {
+        final trustedKey = await _keyPair(_trustedSeed);
+        final release = await _innoRelease(
+          downloadUrl: server.uri,
+          expectedBytes: bytes,
+          signingKey: trustedKey,
+        );
+        final service = await _service(
+          trustedKey,
+          pinnedAuthenticodeThumbprints: [_testThumbprint],
+        );
+
+        if (io.Platform.isWindows) {
+          await expectLater(
+            service.downloadAndInstall(release),
+            throwsA(isA<_ExitException>()),
+          );
+
+          expect(server.requests, 1);
+          expect(fakePlatform.installCalls, 1);
+          expect(fakePlatform.allowUnsignedMacOSUpdates, isFalse);
+          final stagedPath = fakePlatform.installedStagingPath!;
+          expect(io.File('$stagedPath/installer.exe').existsSync(), isTrue);
+          final manifestFile = io.File(
+            '$stagedPath/.desktop_updater_release_manifest.json',
+          );
+          expect(manifestFile.existsSync(), isTrue);
+          final manifestJson = jsonDecode(manifestFile.readAsStringSync());
+          expect(manifestJson['install']['strategy'], 'innoInstaller');
+          expect(
+            manifestJson['install']['inno']['authenticode']['required'],
+            isTrue,
+          );
+          expect(
+            manifestJson['install']['inno']['authenticode']['sha256Thumbprints'],
+            [_testThumbprint],
+          );
+        } else {
+          await expectLater(
+            service.downloadAndInstall(release),
+            throwsA(
+              isA<AppUpdateException>().having(
+                (error) => error.message,
+                'message',
+                contains(
+                  'Inno installer updates are only supported on Windows',
+                ),
+              ),
+            ),
+          );
+        }
+      } finally {
+        DesktopUpdaterPlatform.instance = originalPlatform;
+        await server.close();
+        if (fakePlatform.installedStagingPath != null) {
+          await io.Directory(
+            fakePlatform.installedStagingPath!,
+          ).delete(recursive: true);
+        }
+      }
+    },
+  );
+
+  test(
+    'rejects Inno installer update when Authenticode thumbprint is not configured',
+    () async {
+      final bytes = <int>[1, 2, 3, 4, 5];
+      final server = await _ArtifactServer.start(bytes);
+      final fakePlatform = _FakeDesktopUpdaterPlatform();
+      final originalPlatform = DesktopUpdaterPlatform.instance;
+      DesktopUpdaterPlatform.instance = fakePlatform;
+      try {
+        final trustedKey = await _keyPair(_trustedSeed);
+        final release = await _innoRelease(
+          downloadUrl: server.uri,
+          expectedBytes: bytes,
+          signingKey: trustedKey,
+        );
+        final service = await _service(
+          trustedKey,
+          pinnedAuthenticodeThumbprints: const [],
+        );
+
+        await expectLater(
+          service.downloadAndInstall(release),
+          throwsA(
+            isA<AppUpdateException>().having(
+              (error) => error.message,
+              'message',
+              contains('WINDOWS_AUTHENTICODE_SHA256'),
+            ),
+          ),
+        );
+
+        expect(server.requests, 0);
+        expect(fakePlatform.installCalls, 0);
+      } finally {
+        DesktopUpdaterPlatform.instance = originalPlatform;
+        await server.close();
+      }
+    },
+  );
+
+  test(
+    'rejects Inno installer update when Authenticode thumbprint is invalid hex format',
+    () async {
+      final bytes = <int>[1, 2, 3, 4, 5];
+      final server = await _ArtifactServer.start(bytes);
+      final fakePlatform = _FakeDesktopUpdaterPlatform();
+      final originalPlatform = DesktopUpdaterPlatform.instance;
+      DesktopUpdaterPlatform.instance = fakePlatform;
+      try {
+        final trustedKey = await _keyPair(_trustedSeed);
+        final release = await _innoRelease(
+          downloadUrl: server.uri,
+          expectedBytes: bytes,
+          signingKey: trustedKey,
+        );
+        final service = await _service(
+          trustedKey,
+          pinnedAuthenticodeThumbprints: const ['invalid-not-64-hex'],
+        );
+
+        await expectLater(
+          service.downloadAndInstall(release),
+          throwsA(
+            isA<AppUpdateException>().having(
+              (error) => error.message,
+              'message',
+              contains('格式无效'),
+            ),
+          ),
+        );
+
+        expect(server.requests, 0);
+        expect(fakePlatform.installCalls, 0);
+      } finally {
+        DesktopUpdaterPlatform.instance = originalPlatform;
+        await server.close();
       }
     },
   );
@@ -276,6 +500,89 @@ void main() {
       await server.close();
     }
   });
+
+  test('rejects update when public key ID is not pinned/trusted', () async {
+    final server = await _ArtifactServer.start(_zipBytes());
+    final trustedKey = await _keyPair(_trustedSeed);
+    try {
+      final placeholder = const ReleaseSignature(
+        algorithm: 'ed25519',
+        publicKeyId: 'untrusted-key-id',
+        value: '',
+      );
+      final unsignedDescriptor = _windowsDescriptor(
+        downloadUrl: server.uri,
+        expectedBytes: _zipBytes(),
+        signature: placeholder,
+      );
+      final signature = ReleaseSignature(
+        algorithm: 'ed25519',
+        publicKeyId: 'untrusted-key-id',
+        value: base64Encode(
+          (await Ed25519().sign(
+            unsignedDescriptor.canonicalSignatureBytes(),
+            keyPair: trustedKey,
+          )).bytes,
+        ),
+      );
+      final release = AppUpdateRelease(
+        version: '0.1.28',
+        tagName: 'v0.1.28',
+        htmlUrl: Uri.parse(
+          'https://github.com/duochifan2003/Thing/releases/tag/v0.1.28',
+        ),
+        notes: 'untrusted key release',
+        generatedAt: _testTimestamp,
+        assets: [
+          AppUpdateAsset(
+            name: 'Thing-windows-v0.1.28.zip',
+            downloadUrl: server.uri,
+            size: _zipBytes().length,
+            sha256: crypto.sha256.convert(_zipBytes()).toString(),
+            signature: signature,
+          ),
+        ],
+      );
+
+      final service = await _service(trustedKey);
+
+      await expectLater(
+        service.downloadAndInstall(release),
+        throwsA(
+          isA<AppUpdateException>().having(
+            (error) => error.message,
+            'message',
+            contains('签名'),
+          ),
+        ),
+      );
+      expect(server.requests, 0);
+    } finally {
+      await server.close();
+    }
+  });
+}
+
+class _FakeDesktopUpdaterPlatform extends DesktopUpdaterPlatform {
+  String? installedStagingPath;
+  bool? allowUnsignedMacOSUpdates;
+  List<String> removedFiles = const [];
+  String? diagnosticsLogPath;
+  int installCalls = 0;
+
+  @override
+  Future<void> installUpdate({
+    required String stagingPath,
+    List<String> removedFiles = const [],
+    bool allowUnsignedMacOSUpdates = false,
+    String? diagnosticsLogPath,
+  }) async {
+    installCalls++;
+    installedStagingPath = stagingPath;
+    this.removedFiles = removedFiles;
+    this.allowUnsignedMacOSUpdates = allowUnsignedMacOSUpdates;
+    this.diagnosticsLogPath = diagnosticsLogPath;
+  }
 }
 
 const _testKeyId = 'test-release-key';
@@ -362,14 +669,17 @@ Future<Map<String, String>> _publicKeys(SimpleKeyPair keyPair) async {
 Future<AppUpdateService> _service(
   SimpleKeyPair trustedKey, {
   UpdateInstaller? installUpdate,
+  List<String>? pinnedAuthenticodeThumbprints,
+  String operatingSystem = 'windows',
 }) async {
   return AppUpdateService(
     currentVersion: '0.1.22',
-    operatingSystem: 'windows',
+    operatingSystem: operatingSystem,
     exitApp: (_) => throw const _ExitException(),
     installUpdate: installUpdate,
     pinnedPublicKeys: await _publicKeys(trustedKey),
-    pinnedAuthenticodeThumbprints: [_testThumbprint],
+    pinnedAuthenticodeThumbprints:
+        pinnedAuthenticodeThumbprints ?? [_testThumbprint],
   );
 }
 
@@ -447,6 +757,94 @@ ReleaseDescriptor _windowsDescriptor({
       length: expectedBytes.length,
     ),
     install: const ReleaseInstall(strategy: 'wholeDirectoryReplace'),
+    signature: signature,
+    minimumUpdaterVersion: '2.7.0',
+    generatedAt: _testTimestamp,
+  );
+}
+
+Future<AppUpdateRelease> _innoRelease({
+  required Uri downloadUrl,
+  required List<int> expectedBytes,
+  required SimpleKeyPair? signingKey,
+}) async {
+  final placeholder = signingKey == null
+      ? null
+      : const ReleaseSignature(
+          algorithm: 'ed25519',
+          publicKeyId: _testKeyId,
+          value: '',
+        );
+  final unsignedDescriptor = _innoDescriptor(
+    downloadUrl: downloadUrl,
+    expectedBytes: expectedBytes,
+    signature: placeholder,
+  );
+  final signature = signingKey == null
+      ? null
+      : ReleaseSignature(
+          algorithm: 'ed25519',
+          publicKeyId: _testKeyId,
+          value: base64Encode(
+            (await Ed25519().sign(
+              unsignedDescriptor.canonicalSignatureBytes(),
+              keyPair: signingKey,
+            )).bytes,
+          ),
+        );
+  return AppUpdateRelease(
+    version: '0.1.28',
+    tagName: 'v0.1.28',
+    htmlUrl: Uri.parse(
+      'https://github.com/duochifan2003/Thing/releases/tag/v0.1.28',
+    ),
+    notes: 'test release',
+    generatedAt: _testTimestamp,
+    assets: [
+      AppUpdateAsset(
+        name: 'Thing-windows-v0.1.28-setup.exe',
+        downloadUrl: downloadUrl,
+        size: expectedBytes.length,
+        sha256: crypto.sha256.convert(expectedBytes).toString(),
+        signature: signature,
+      ),
+    ],
+  );
+}
+
+ReleaseDescriptor _innoDescriptor({
+  required Uri downloadUrl,
+  required List<int> expectedBytes,
+  required ReleaseSignature? signature,
+}) {
+  return ReleaseDescriptor(
+    schemaVersion: 3,
+    packageId: 'local.munch.eventatlas',
+    appName: 'Thing',
+    version: '0.1.28',
+    buildNumber: null,
+    platform: 'windows',
+    channel: 'stable',
+    artifact: ReleaseArtifact(
+      kind: 'innoInstaller',
+      url: downloadUrl,
+      sha256: crypto.sha256.convert(expectedBytes).toString(),
+      length: expectedBytes.length,
+    ),
+    install: ReleaseInstall(
+      strategy: 'innoInstaller',
+      inno: ReleaseInnoInstall(
+        silentArgs: const ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
+        inheritInstallDirectory: true,
+        logFileName: 'thing-update.log',
+        relaunchAfterInstall: true,
+        requiresElevation: 'auto',
+        authenticode: ReleaseAuthenticodePolicy(
+          required: true,
+          sha256Thumbprints: [_testThumbprint],
+        ),
+      ),
+    ),
     signature: signature,
     minimumUpdaterVersion: '2.7.0',
     generatedAt: _testTimestamp,

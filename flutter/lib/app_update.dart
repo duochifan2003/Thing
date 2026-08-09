@@ -16,13 +16,13 @@ const defaultPinnedReleasePublicKeys = <String, String>{
   defaultReleasePublicKeyId: defaultReleasePublicKey,
 };
 
-const _configuredAuthenticodeThumbprint = String.fromEnvironment(
+const configuredAuthenticodeThumbprint = String.fromEnvironment(
   'WINDOWS_AUTHENTICODE_SHA256',
 );
 final defaultPinnedAuthenticodeThumbprints =
-    _configuredAuthenticodeThumbprint.isEmpty
+    configuredAuthenticodeThumbprint.trim().isEmpty
     ? const <String>[]
-    : <String>[_configuredAuthenticodeThumbprint];
+    : <String>[configuredAuthenticodeThumbprint.trim()];
 
 const _repository = 'duochifan2003/Thing';
 const _latestReleaseUri =
@@ -171,7 +171,10 @@ class AppUpdateRelease {
         final signature =
             _parseSignature(rawAsset['signature']) ??
             signatures[name] ??
+            signatures[name.toLowerCase()] ??
             bodySignatures[name] ??
+            bodySignatures[name.toLowerCase()] ??
+            bodySignatures['*'] ??
             topSignature;
         assets.add(
           AppUpdateAsset(
@@ -222,18 +225,30 @@ Map<String, ReleaseSignature> _parseSignaturesFromBody(Object? body) {
     r'```(?:json)?\s*([\s\S]*?)\s*```',
     caseSensitive: false,
   ).allMatches(body);
+  final signatures = <String, ReleaseSignature>{};
   for (final block in blocks) {
     try {
       final decoded = jsonDecode(block.group(1)!);
       if (decoded is Map) {
-        final signatures = _parseSignaturesMap(decoded['signatures']);
-        if (signatures.isNotEmpty) return signatures;
+        signatures.addAll(_parseSignaturesMap(decoded['signatures']));
+        final topSig = _parseSignature(decoded['signature']);
+        if (topSig != null && !signatures.containsKey('*')) {
+          signatures['*'] = topSig;
+        }
+        if (decoded['release'] is Map) {
+          final rel = Map<String, dynamic>.from(decoded['release'] as Map);
+          signatures.addAll(_parseSignaturesMap(rel['signatures']));
+          final relSig = _parseSignature(rel['signature']);
+          if (relSig != null && !signatures.containsKey('*')) {
+            signatures['*'] = relSig;
+          }
+        }
       }
     } on Object {
       continue;
     }
   }
-  return const {};
+  return signatures;
 }
 
 class AppUpdateService {
@@ -372,6 +387,18 @@ class AppUpdateService {
           ),
         );
       case 'innoInstaller':
+        if (_pinnedAuthenticodeThumbprints.isEmpty) {
+          throw const AppUpdateException(
+            '未配置 Windows Authenticode 证书指纹 (WINDOWS_AUTHENTICODE_SHA256)，拒绝执行未受信任的安装程序更新。',
+          );
+        }
+        for (final thumbprint in _pinnedAuthenticodeThumbprints) {
+          if (!RegExp(r'^[0-9A-Fa-f]{64}$').hasMatch(thumbprint)) {
+            throw const AppUpdateException(
+              'Windows Authenticode 证书指纹格式无效（必须为 64 位十六进制字符）。',
+            );
+          }
+        }
         return ReleaseInstall(
           strategy: 'innoInstaller',
           inno: ReleaseInnoInstall(
