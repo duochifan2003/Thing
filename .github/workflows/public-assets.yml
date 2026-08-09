@@ -173,6 +173,14 @@ jobs:
         run: |
           set -euo pipefail
           version=${RELEASE_TAG#v}
+          find_asset() {
+            find release -type f -name "$1" -print -quit
+          }
+          windows_zip=$(find_asset "Thing-windows-v${version}.zip")
+          windows_setup=$(find_asset "Thing-windows-v${version}-setup.exe")
+          test -n "$windows_zip" -a -n "$windows_setup"
+          mv "$windows_zip" release/Thing-windows-"$RELEASE_TAG".zip
+          mv "$windows_setup" release/Thing-windows-v"$version"-setup.exe
           gh release upload "$RELEASE_TAG" \
             release/Thing-macOS-v"$version".dmg \
             release/Thing-macOS-v"$version".zip \
