@@ -243,7 +243,6 @@ void main() {
     await tester.tap(find.byType(MenuAnchor));
     await tester.pumpAndSettle();
     final menu = tester.widget<MenuAnchor>(find.byType(MenuAnchor));
-    expect(menu.animated, isTrue);
     expect(menu.style?.alignment, AlignmentDirectional.bottomStart);
     expect(menu.style?.shape?.resolve({}), isA<RoundedRectangleBorder>());
     final inputRect = tester.getRect(find.byType(InputDecorator));
@@ -314,7 +313,6 @@ void main() {
 
     final editorMenus = tester.widgetList<MenuAnchor>(find.byType(MenuAnchor));
     expect(editorMenus, isNotEmpty);
-    expect(editorMenus.every((menu) => menu.animated), isTrue);
     expect(find.text(Precision.month.label), findsOneWidget);
     expect(find.byType(Divider), findsNothing);
 
@@ -366,8 +364,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final menu = tester.widget<MenuAnchor>(find.byType(MenuAnchor));
-    expect(menu.animated, isTrue);
     await tester.tap(find.byTooltip('更多操作'));
     await tester.pumpAndSettle();
 

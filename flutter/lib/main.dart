@@ -2633,9 +2633,7 @@ class ArchiveDetail extends StatelessWidget {
     }
 
     final menu = MenuAnchor(
-      animated: true,
       crossAxisUnconstrained: false,
-      reservedPadding: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       style: MenuStyle(
         alignment: AlignmentDirectional.bottomEnd,
@@ -3129,10 +3127,8 @@ class _AtlasDropdownState<T> extends State<_AtlasDropdown<T>> {
       );
 
       return MenuAnchor(
-        animated: menuChildren.length < 30,
         childFocusNode: _focusNode,
         crossAxisUnconstrained: false,
-        reservedPadding: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
         style: menuStyle,
         menuChildren: menuChildren,
