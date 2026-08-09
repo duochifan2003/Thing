@@ -109,10 +109,12 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Build unsigned APK
+        env:
+          ORG_GRADLE_PROJECT_publicUnsigned: "true"
         run: |
           version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
           app_version=${version%%+*}
-          GRADLE_OPTS="-PpublicUnsigned" flutter build apk --release \
+          flutter build apk --release \
             --dart-define=APP_VERSION="$app_version" \
             --dart-define=APP_BUILD="${version#*+}"
           apk=$(find build/app/outputs/apk/release -maxdepth 1 -name '*unsigned.apk' -print -quit)
