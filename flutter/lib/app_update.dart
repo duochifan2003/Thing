@@ -5,9 +5,9 @@ import 'package:desktop_updater/desktop_updater.dart';
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
-  defaultValue: '0.1.21',
+  defaultValue: '0.1.22',
 );
-const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '44');
+const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '45');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
 const _repository = 'duochifan2003/Thing';
@@ -77,7 +77,9 @@ class AppUpdateRelease {
       );
     }
     return candidates.firstWhere(
-      (asset) => asset.name.toLowerCase().endsWith('-setup.exe'),
+      (asset) =>
+          asset.name.toLowerCase().endsWith('-setup.exe') ||
+          asset.name.toLowerCase().endsWith('.exe'),
       orElse: () => candidates.first,
     );
   }
@@ -92,6 +94,7 @@ class AppUpdateRelease {
     if (releaseUrl == null || !_isAllowedGitHubUri(releaseUrl)) {
       throw const FormatException('GitHub 更新地址无效。');
     }
+    final body = json['body'] is String ? json['body'] as String : '';
     final assets = <AppUpdateAsset>[];
     final rawAssets = json['assets'];
     if (rawAssets is List) {
@@ -102,15 +105,13 @@ class AppUpdateRelease {
         if (name is! String || downloadUrl is! String) continue;
         final uri = Uri.tryParse(downloadUrl);
         if (uri == null || !_isAllowedGitHubUri(uri)) continue;
-        final digest = rawAsset['digest'];
+        final sha256 = _findSha256(rawAsset, name, body);
         assets.add(
           AppUpdateAsset(
             name: name,
             downloadUrl: uri,
             size: rawAsset['size'] is int ? rawAsset['size'] as int : 0,
-            sha256: digest is String && digest.startsWith('sha256:')
-                ? digest.substring('sha256:'.length).toLowerCase()
-                : '',
+            sha256: sha256,
           ),
         );
       }
@@ -119,10 +120,39 @@ class AppUpdateRelease {
       version: _normalizeVersion(tagName),
       tagName: tagName,
       htmlUrl: releaseUrl,
-      notes: json['body'] is String ? json['body'] as String : '',
+      notes: body,
       assets: assets,
     );
   }
+}
+
+String _findSha256(Map rawAsset, String assetName, String body) {
+  final digest = rawAsset['digest'];
+  if (digest is String && digest.startsWith('sha256:')) {
+    final hash = digest.substring('sha256:'.length).trim().toLowerCase();
+    if (RegExp(r'^[0-9a-f]{64}$').hasMatch(hash)) return hash;
+  }
+  final sha256Field = rawAsset['sha256'];
+  if (sha256Field is String) {
+    final hash = sha256Field.trim().toLowerCase();
+    if (RegExp(r'^[0-9a-f]{64}$').hasMatch(hash)) return hash;
+  }
+  final escapedName = RegExp.escape(assetName);
+  final patterns = [
+    RegExp('([0-9a-fA-F]{64})\\s+[*]?$escapedName'),
+    RegExp('$escapedName\\s*[:=]\\s*([0-9a-fA-F]{64})'),
+    RegExp(
+      'SHA-?256\\s*\\($escapedName\\)\\s*=\\s*([0-9a-fA-F]{64})',
+      caseSensitive: false,
+    ),
+  ];
+  for (final pattern in patterns) {
+    final match = pattern.firstMatch(body);
+    if (match != null) {
+      return match.group(1)!.toLowerCase();
+    }
+  }
+  return '';
 }
 
 class AppUpdateService {
@@ -131,14 +161,17 @@ class AppUpdateService {
     String? operatingSystem,
     UpdateJsonFetcher? fetchJson,
     UpdateExit? exitApp,
+    DesktopUpdater? desktopUpdater,
   }) : operatingSystem = operatingSystem ?? io.Platform.operatingSystem,
        _fetchJson = fetchJson,
-       _exitApp = exitApp ?? io.exit;
+       _exitApp = exitApp ?? io.exit,
+       _desktopUpdater = desktopUpdater ?? DesktopUpdater();
 
   final String currentVersion;
   final String operatingSystem;
   final UpdateJsonFetcher? _fetchJson;
   final UpdateExit _exitApp;
+  final DesktopUpdater _desktopUpdater;
 
   Future<AppUpdateRelease?> checkForUpdate() async {
     final source = _fetchJson ?? _fetchLatestRelease;
@@ -168,14 +201,18 @@ class AppUpdateService {
     if (operatingSystem != 'macos' && operatingSystem != 'windows') {
       throw const AppUpdateException('当前系统暂不支持自动安装更新。');
     }
-    if (asset.size <= 0 || !RegExp(r'^[0-9a-f]{64}$').hasMatch(asset.sha256)) {
+    if (asset.size <= 0) {
+      throw const AppUpdateException('GitHub 更新包大小无效。');
+    }
+    if (asset.sha256.isEmpty ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(asset.sha256)) {
       throw const AppUpdateException('GitHub 更新包缺少有效的 SHA-256 校验信息。');
     }
 
     final descriptor = ReleaseDescriptor(
       schemaVersion: 3,
       packageId: 'local.munch.eventatlas',
-      appName: 'Thing',
+      appName: operatingSystem == 'macos' ? 'Thing.app' : 'Thing',
       version: release.version,
       buildNumber: null,
       platform: operatingSystem,
@@ -192,7 +229,7 @@ class AppUpdateService {
     )..validate();
 
     try {
-      final staged = await DesktopUpdater().downloadZipFirstUpdate(
+      final staged = await _desktopUpdater.downloadZipFirstUpdate(
         appArchiveUrl: Uri.parse(_latestReleaseUri),
         currentVersion: DesktopVersionInfo.parse(currentVersion),
         descriptor: descriptor,
@@ -201,7 +238,7 @@ class AppUpdateService {
         },
       );
       onProgress?.call(1);
-      await DesktopUpdater().installUpdate(
+      await _desktopUpdater.installUpdate(
         stagingPath: staged.stagingPath,
         allowUnsignedMacOSUpdates: true,
       );
@@ -272,6 +309,10 @@ class AppUpdateService {
       rethrow;
     } on io.SocketException {
       throw const AppUpdateException('无法连接 GitHub，请检查网络后重试。');
+    } on io.HttpException {
+      throw const AppUpdateException('网络请求发生错误，请稍后重试。');
+    } on Object catch (e) {
+      throw AppUpdateException('检查更新失败：$e');
     } finally {
       client.close(force: true);
     }
