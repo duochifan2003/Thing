@@ -32,6 +32,13 @@ typedef UpdateProgress = void Function(double value);
 typedef UpdateJsonFetcher = Future<String> Function(Uri uri);
 typedef UpdateExit = Never Function(int code);
 typedef UpdateInstaller = Future<void> Function(String stagingPath);
+typedef UpdateStager =
+    Future<UpdateStageResult> Function({
+      required Uri appArchiveUrl,
+      required DesktopVersionInfo currentVersion,
+      required ReleaseDescriptor descriptor,
+      void Function(int receivedBytes, int? totalBytes)? onProgress,
+    });
 
 Future<bool> verifyReleaseSignature({
   required ReleaseDescriptor descriptor,
@@ -80,14 +87,16 @@ class AppUpdateAsset {
     required this.downloadUrl,
     this.size = 0,
     this.sha256 = '',
-    this.signature,
+    this.descriptorUrl,
+    this.descriptor,
   });
 
   final String name;
   final Uri downloadUrl;
   final int size;
   final String sha256;
-  final ReleaseSignature? signature;
+  final Uri? descriptorUrl;
+  final ReleaseDescriptor? descriptor;
 }
 
 class AppUpdateRelease {
@@ -97,7 +106,6 @@ class AppUpdateRelease {
     required this.htmlUrl,
     required this.notes,
     required this.assets,
-    this.signature,
     DateTime? generatedAt,
   }) : generatedAt =
            generatedAt ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
@@ -107,7 +115,6 @@ class AppUpdateRelease {
   final Uri htmlUrl;
   final String notes;
   final List<AppUpdateAsset> assets;
-  final ReleaseSignature? signature;
   final DateTime generatedAt;
 
   AppUpdateAsset? assetFor(String operatingSystem) {
@@ -146,9 +153,63 @@ class AppUpdateRelease {
     if (releaseUrl == null || !_isAllowedGitHubUri(releaseUrl)) {
       throw const FormatException('GitHub 更新地址无效。');
     }
-    final topSignature = _parseSignature(json['signature']);
-    final signatures = _parseSignaturesMap(json['signatures']);
-    final bodySignatures = _parseSignaturesFromBody(json['body']);
+
+    final descriptorUrls = <String, Uri>{};
+    final rawAssetList = <Map<String, dynamic>>[];
+    final rawAssets = json['assets'];
+    if (rawAssets is List) {
+      for (final raw in rawAssets) {
+        if (raw is! Map) continue;
+        final map = Map<String, dynamic>.from(raw);
+        final name = map['name'];
+        final downloadUrl = map['browser_download_url'];
+        if (name is! String || downloadUrl is! String) continue;
+        final uri = Uri.tryParse(downloadUrl);
+        if (uri == null || !_isAllowedGitHubUri(uri)) continue;
+
+        if (name.endsWith('.release.json')) {
+          final targetName = name.substring(
+            0,
+            name.length - '.release.json'.length,
+          );
+          descriptorUrls[targetName] = uri;
+        } else {
+          rawAssetList.add(map);
+        }
+      }
+    }
+
+    final assets = <AppUpdateAsset>[];
+    for (final map in rawAssetList) {
+      final name = map['name'] as String;
+      final uri = Uri.parse(map['browser_download_url'] as String);
+      final size = map['size'] is int ? map['size'] as int : 0;
+      final digestRaw = map['digest'] as String? ?? '';
+      final sha256 = digestRaw
+          .replaceFirst(RegExp(r'^sha256:', caseSensitive: false), '')
+          .trim()
+          .toLowerCase();
+      final descriptorUrl = descriptorUrls[name];
+      ReleaseDescriptor? descriptor;
+      if (map['descriptor'] is Map) {
+        descriptor = ReleaseDescriptor.fromJson(
+          Map<String, dynamic>.from(map['descriptor'] as Map),
+        );
+      }
+      assets.add(
+        AppUpdateAsset(
+          name: name,
+          downloadUrl: uri,
+          size: size,
+          sha256: sha256,
+          descriptorUrl: descriptorUrl,
+          descriptor: descriptor,
+        ),
+      );
+    }
+
+    final version = _normalizeVersion(tagName);
+    final notes = json['body'] as String? ?? '';
     final generatedAt =
         DateTime.tryParse(
           json['published_at'] as String? ??
@@ -157,98 +218,16 @@ class AppUpdateRelease {
               '',
         ) ??
         DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-    final assets = <AppUpdateAsset>[];
-    final rawAssets = json['assets'];
-    if (rawAssets is List) {
-      for (final rawAsset in rawAssets) {
-        if (rawAsset is! Map) continue;
-        final name = rawAsset['name'];
-        final downloadUrl = rawAsset['browser_download_url'];
-        if (name is! String || downloadUrl is! String) continue;
-        final uri = Uri.tryParse(downloadUrl);
-        if (uri == null || !_isAllowedGitHubUri(uri)) continue;
-        final digest = rawAsset['digest'];
-        final signature =
-            _parseSignature(rawAsset['signature']) ??
-            signatures[name] ??
-            signatures[name.toLowerCase()] ??
-            bodySignatures[name] ??
-            bodySignatures[name.toLowerCase()] ??
-            bodySignatures['*'] ??
-            topSignature;
-        assets.add(
-          AppUpdateAsset(
-            name: name,
-            downloadUrl: uri,
-            size: rawAsset['size'] is int ? rawAsset['size'] as int : 0,
-            sha256: digest is String && digest.startsWith('sha256:')
-                ? digest.substring('sha256:'.length).toLowerCase()
-                : rawAsset['sha256'] is String
-                ? (rawAsset['sha256'] as String).toLowerCase()
-                : '',
-            signature: signature,
-          ),
-        );
-      }
-    }
+
     return AppUpdateRelease(
-      version: _normalizeVersion(tagName),
+      version: version,
       tagName: tagName,
       htmlUrl: releaseUrl,
-      notes: json['body'] is String ? json['body'] as String : '',
+      notes: notes,
       assets: assets,
-      signature: topSignature,
       generatedAt: generatedAt,
     );
   }
-}
-
-ReleaseSignature? _parseSignature(Object? value) {
-  if (value is! Map) return null;
-  return ReleaseSignature.fromJson(Map<String, dynamic>.from(value));
-}
-
-Map<String, ReleaseSignature> _parseSignaturesMap(Object? value) {
-  if (value is! Map) return const {};
-  final signatures = <String, ReleaseSignature>{};
-  for (final entry in value.entries) {
-    final name = entry.key.toString().trim();
-    final signature = _parseSignature(entry.value);
-    if (name.isNotEmpty && signature != null) signatures[name] = signature;
-  }
-  return signatures;
-}
-
-Map<String, ReleaseSignature> _parseSignaturesFromBody(Object? body) {
-  if (body is! String || body.isEmpty) return const {};
-  final blocks = RegExp(
-    r'```(?:json)?\s*([\s\S]*?)\s*```',
-    caseSensitive: false,
-  ).allMatches(body);
-  final signatures = <String, ReleaseSignature>{};
-  for (final block in blocks) {
-    try {
-      final decoded = jsonDecode(block.group(1)!);
-      if (decoded is Map) {
-        signatures.addAll(_parseSignaturesMap(decoded['signatures']));
-        final topSig = _parseSignature(decoded['signature']);
-        if (topSig != null && !signatures.containsKey('*')) {
-          signatures['*'] = topSig;
-        }
-        if (decoded['release'] is Map) {
-          final rel = Map<String, dynamic>.from(decoded['release'] as Map);
-          signatures.addAll(_parseSignaturesMap(rel['signatures']));
-          final relSig = _parseSignature(rel['signature']);
-          if (relSig != null && !signatures.containsKey('*')) {
-            signatures['*'] = relSig;
-          }
-        }
-      }
-    } on Object {
-      continue;
-    }
-  }
-  return signatures;
 }
 
 class AppUpdateService {
@@ -258,12 +237,14 @@ class AppUpdateService {
     UpdateJsonFetcher? fetchJson,
     UpdateExit? exitApp,
     UpdateInstaller? installUpdate,
+    UpdateStager? stageUpdate,
     Map<String, String>? pinnedPublicKeys,
     List<String>? pinnedAuthenticodeThumbprints,
   }) : operatingSystem = operatingSystem ?? io.Platform.operatingSystem,
        _fetchJson = fetchJson,
        _exitApp = exitApp ?? io.exit,
        _installUpdate = installUpdate,
+       _stageUpdate = stageUpdate,
        _pinnedPublicKeys = Map.unmodifiable(
          pinnedPublicKeys ?? defaultPinnedReleasePublicKeys,
        ),
@@ -276,6 +257,7 @@ class AppUpdateService {
   final UpdateJsonFetcher? _fetchJson;
   final UpdateExit _exitApp;
   final UpdateInstaller? _installUpdate;
+  final UpdateStager? _stageUpdate;
   final Map<String, String> _pinnedPublicKeys;
   final List<String> _pinnedAuthenticodeThumbprints;
 
@@ -307,37 +289,127 @@ class AppUpdateService {
     if (operatingSystem != 'macos' && operatingSystem != 'windows') {
       throw const AppUpdateException('当前系统暂不支持自动安装更新。');
     }
-    if (asset.size <= 0 || !RegExp(r'^[0-9a-f]{64}$').hasMatch(asset.sha256)) {
-      throw const AppUpdateException('GitHub 更新包缺少有效的 SHA-256 校验信息。');
+
+    ReleaseDescriptor descriptor;
+    if (asset.descriptor != null) {
+      descriptor = asset.descriptor!;
+    } else if (asset.descriptorUrl != null) {
+      final source = _fetchJson ?? _fetchLatestRelease;
+      final descriptorRaw = await source(asset.descriptorUrl!);
+      final decoded = jsonDecode(descriptorRaw);
+      if (decoded is! Map) {
+        throw const AppUpdateException('签名描述文件格式无效。');
+      }
+      try {
+        descriptor = ReleaseDescriptor.fromJson(
+          Map<String, dynamic>.from(decoded),
+        );
+      } on Object catch (e) {
+        throw AppUpdateException('签名描述文件解析失败：$e');
+      }
+    } else {
+      throw AppUpdateException(
+        'GitHub 更新包缺少对应的签名描述文件 (${asset.name}.release.json)。',
+      );
+    }
+
+    if (descriptor.schemaVersion != 3) {
+      throw const AppUpdateException('签名描述版本不支持（必须为 schemaVersion 3）。');
+    }
+    if (descriptor.packageId != 'local.munch.eventatlas' ||
+        descriptor.appName != 'Thing') {
+      throw const AppUpdateException('签名描述包标识或应用名称不匹配。');
+    }
+    if (descriptor.platform != operatingSystem) {
+      throw const AppUpdateException('签名描述目标平台与当前系统不匹配。');
+    }
+    if (descriptor.channel != 'stable') {
+      throw const AppUpdateException('签名描述发布通道无效。');
+    }
+    if (descriptor.minimumUpdaterVersion != '2.7.0') {
+      throw const AppUpdateException('更新器最低版本要求不匹配。');
+    }
+    if (_normalizeVersion(descriptor.version) !=
+        _normalizeVersion(release.version)) {
+      throw const AppUpdateException('签名描述版本与 Release 版本不一致。');
+    }
+    if (descriptor.artifact.url != asset.downloadUrl) {
+      throw const AppUpdateException('签名描述中的下载地址与 Release 资产地址不一致。');
+    }
+    if (asset.size > 0 && descriptor.artifact.length != asset.size) {
+      throw const AppUpdateException('签名描述中的文件大小与 Release 资产大小不一致。');
+    }
+    final expectedSha256 = descriptor.artifact.sha256.trim().toLowerCase();
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedSha256)) {
+      throw const AppUpdateException('签名描述中缺少有效的 SHA-256 校验信息。');
+    }
+    if (asset.sha256.isNotEmpty && asset.sha256 != expectedSha256) {
+      throw const AppUpdateException('Release 资产 digest 与签名描述 SHA-256 不一致。');
+    }
+
+    if (operatingSystem == 'windows') {
+      if (descriptor.artifact.kind == 'innoInstaller') {
+        final inno = descriptor.install.inno;
+        if (descriptor.install.strategy != 'innoInstaller' || inno == null) {
+          throw const AppUpdateException('Windows 安装程序策略不匹配。');
+        }
+        if (!inno.authenticode.required) {
+          throw const AppUpdateException('Windows 安装程序必须启用 Authenticode 签名校验。');
+        }
+        if (_pinnedAuthenticodeThumbprints.isEmpty) {
+          throw const AppUpdateException(
+            '未配置 Windows Authenticode 证书指纹 (WINDOWS_AUTHENTICODE_SHA256)，拒绝执行未受信任的安装程序更新。',
+          );
+        }
+        for (final thumbprint in _pinnedAuthenticodeThumbprints) {
+          if (!RegExp(r'^[0-9A-Fa-f]{64}$').hasMatch(thumbprint)) {
+            throw const AppUpdateException(
+              'Windows Authenticode 证书指纹格式无效（必须为 64 位十六进制字符）。',
+            );
+          }
+          if (!inno.authenticode.sha256Thumbprints.any(
+            (t) => t.toLowerCase() == thumbprint.toLowerCase(),
+          )) {
+            throw const AppUpdateException('签名描述 Authenticode 指纹与客户端固定指纹不匹配。');
+          }
+        }
+      } else if (descriptor.artifact.kind == 'zip') {
+        if (descriptor.install.strategy != 'wholeDirectoryReplace') {
+          throw const AppUpdateException('Windows ZIP 更新策略不匹配。');
+        }
+      } else {
+        throw AppUpdateException(
+          '不支持的 Windows 产物类型：${descriptor.artifact.kind}。',
+        );
+      }
+    } else if (operatingSystem == 'macos') {
+      if (descriptor.artifact.kind != 'dmg' &&
+          descriptor.artifact.kind != 'zip') {
+        throw AppUpdateException(
+          '不支持的 macOS 产物类型：${descriptor.artifact.kind}。',
+        );
+      }
+      if (descriptor.artifact.kind == 'dmg') {
+        final macosDmg = descriptor.install.macosDmg;
+        if (descriptor.install.strategy != 'wholeBundleReplace' ||
+            macosDmg == null ||
+            macosDmg.appBundleName != 'Thing.app' ||
+            !macosDmg.verifyPrimarySignature) {
+          throw const AppUpdateException('macOS DMG 更新策略无效（必须启用主签名校验）。');
+        }
+      }
+    }
+
+    if (!await verifyReleaseSignature(
+      descriptor: descriptor,
+      publicKeys: _pinnedPublicKeys,
+    )) {
+      throw const AppUpdateException('更新校验失败：签名或签名描述无效。');
     }
 
     try {
-      final descriptor = ReleaseDescriptor(
-        schemaVersion: 3,
-        packageId: 'local.munch.eventatlas',
-        appName: 'Thing',
-        version: release.version,
-        buildNumber: null,
-        platform: operatingSystem,
-        channel: 'stable',
-        artifact: ReleaseArtifact(
-          kind: _artifactKind(asset),
-          url: asset.downloadUrl,
-          sha256: asset.sha256,
-          length: asset.size,
-        ),
-        install: _installMetadata(asset),
-        signature: asset.signature ?? release.signature,
-        minimumUpdaterVersion: '2.7.0',
-        generatedAt: release.generatedAt,
-      );
-      if (!await verifyReleaseSignature(
-        descriptor: descriptor,
-        publicKeys: _pinnedPublicKeys,
-      )) {
-        throw const AppUpdateException('更新校验失败：签名或签名描述无效。');
-      }
-      final staged = await DesktopUpdater().downloadZipFirstUpdate(
+      final stager = _stageUpdate ?? DesktopUpdater().downloadZipFirstUpdate;
+      final staged = await stager(
         appArchiveUrl: Uri.parse(_latestReleaseUri),
         currentVersion: DesktopVersionInfo.parse(currentVersion),
         descriptor: descriptor,
@@ -365,57 +437,6 @@ class AppUpdateService {
       throw AppUpdateException('更新安装失败：$error');
     }
     _exitApp(0);
-  }
-
-  String _artifactKind(AppUpdateAsset asset) {
-    final name = asset.name.toLowerCase();
-    if (operatingSystem == 'macos' && name.endsWith('.dmg')) return 'dmg';
-    if (operatingSystem == 'windows' && name.endsWith('.exe')) {
-      return 'innoInstaller';
-    }
-    return 'zip';
-  }
-
-  ReleaseInstall _installMetadata(AppUpdateAsset asset) {
-    switch (_artifactKind(asset)) {
-      case 'dmg':
-        return const ReleaseInstall(
-          strategy: 'wholeBundleReplace',
-          macosDmg: ReleaseMacOSDmgInstall(
-            appBundleName: 'Thing.app',
-            verifyPrimarySignature: true,
-          ),
-        );
-      case 'innoInstaller':
-        if (_pinnedAuthenticodeThumbprints.isEmpty) {
-          throw const AppUpdateException(
-            '未配置 Windows Authenticode 证书指纹 (WINDOWS_AUTHENTICODE_SHA256)，拒绝执行未受信任的安装程序更新。',
-          );
-        }
-        for (final thumbprint in _pinnedAuthenticodeThumbprints) {
-          if (!RegExp(r'^[0-9A-Fa-f]{64}$').hasMatch(thumbprint)) {
-            throw const AppUpdateException(
-              'Windows Authenticode 证书指纹格式无效（必须为 64 位十六进制字符）。',
-            );
-          }
-        }
-        return ReleaseInstall(
-          strategy: 'innoInstaller',
-          inno: ReleaseInnoInstall(
-            silentArgs: ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
-            inheritInstallDirectory: true,
-            logFileName: 'thing-update.log',
-            relaunchAfterInstall: true,
-            requiresElevation: 'auto',
-            authenticode: ReleaseAuthenticodePolicy(
-              required: true,
-              sha256Thumbprints: _pinnedAuthenticodeThumbprints,
-            ),
-          ),
-        );
-      default:
-        return const ReleaseInstall(strategy: 'wholeDirectoryReplace');
-    }
   }
 
   Future<String> _fetchLatestRelease(Uri uri) async {

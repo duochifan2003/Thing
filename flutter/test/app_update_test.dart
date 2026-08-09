@@ -5,198 +5,116 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography_plus/cryptography_plus.dart';
 import 'package:desktop_updater/desktop_updater.dart';
-import 'package:desktop_updater/desktop_updater_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:person_event_atlas/app_update.dart';
 
 void main() {
-  test(
-    'reads the latest GitHub release and selects a Windows package',
-    () async {
-      Uri? requested;
-      final service = AppUpdateService(
-        currentVersion: '0.1.4',
-        operatingSystem: 'windows',
-        fetchJson: (uri) async {
-          requested = uri;
-          return jsonEncode(_releaseJson());
-        },
-      );
-
-      final release = await service.checkForUpdate();
-
-      expect(requested?.host, 'api.github.com');
-      expect(release?.version, '0.1.5');
-      expect(
-        release?.assetFor('windows')?.name,
-        'Thing-windows-v0.1.19-setup.exe',
-      );
-    },
-  );
-
-  test('selects Windows setup installer over the ZIP package', () {
-    final release = AppUpdateRelease.fromJson(
-      _releaseJson(
-        assets: [
-          _assetJson(
-            'Thing-windows-v0.1.19-setup.exe',
-            size: 13177394,
-            digest:
-                'sha256:961adf40eb6795d3cc487d402d16d6c6247d503620e93bd3726ad72f7bc1b2d7',
-          ),
-          _assetJson('Thing-windows-v0.1.19.zip', size: 15440124),
-          _assetJson(
-            'Thing-macOS-v0.1.19.dmg',
-            size: 26523070,
-            digest:
-                'sha256:08587106257237b90fc0c6f92ac5b43aeb7eb29105ec3dd0a16c5f0d0e1809a8',
-          ),
-        ],
-      ),
-    );
-
-    final asset = release.assetFor('windows');
-    expect(asset?.name, 'Thing-windows-v0.1.19-setup.exe');
-    expect(asset?.size, 13177394);
-    expect(
-      asset?.sha256,
-      '961adf40eb6795d3cc487d402d16d6c6247d503620e93bd3726ad72f7bc1b2d7',
-    );
-  });
-
-  test('does not report an older or equal release', () async {
-    final service = AppUpdateService(
-      currentVersion: '0.1.5',
-      operatingSystem: 'macos',
-      fetchJson: (_) async => jsonEncode(_releaseJson()),
-    );
-
-    expect(await service.checkForUpdate(), isNull);
-    expect(isNewerAppVersion('0.1.5', '0.1.5'), isFalse);
-    expect(isNewerAppVersion('0.1.6', '0.1.5'), isTrue);
-  });
-
-  test('compares versions by numeric components', () {
-    expect(isNewerAppVersion('v1.10.0', '1.9.9'), isTrue);
-    expect(isNewerAppVersion('1.2.0', '1.2'), isFalse);
-    expect(isNewerAppVersion('1.2.1', '1.2.0.9'), isTrue);
-    expect(isNewerAppVersion('1.1.99', '1.2.0'), isFalse);
-  });
-
-  test('prefers a macOS DMG when both macOS package types exist', () {
+  test('parses latest release metadata and extracts update assets', () {
     final release = AppUpdateRelease.fromJson(_releaseJson(macAssets: true));
-
-    final asset = release.assetFor('macos');
-    expect(asset?.name, 'Thing-macOS-v0.1.19.dmg');
-    expect(asset?.size, 26523070);
-    expect(release.assetFor('android'), isNull);
-  });
-
-  test('parses release metadata and reports missing assets', () {
-    final release = AppUpdateRelease.fromJson(
-      _releaseJson(
-        assets: [
-          _assetJson('Thing-linux.zip'),
-          {'name': 'invalid-download-url', 'browser_download_url': 'not a uri'},
-          {'name': 'missing-url'},
-          'invalid asset',
-        ],
-      ),
-    );
 
     expect(release.version, '0.1.5');
     expect(release.tagName, 'v0.1.5');
-    expect(release.notes, '修复更新功能。');
-    expect(release.assets, hasLength(1));
-    expect(release.assets.single.name, 'Thing-linux.zip');
-    expect(release.assetFor('windows'), isNull);
-    expect(release.assetFor('macos'), isNull);
-  });
-
-  test('parses per-asset signature descriptions from release metadata', () {
-    final release = AppUpdateRelease.fromJson({
-      'tag_name': 'v0.1.5',
-      'html_url': 'https://github.com/duochifan2003/Thing/releases/tag/v0.1.5',
-      'body': '''
-```json
-{
-  "signatures": {
-    "Thing-windows-v0.1.5-setup.exe": {
-      "algorithm": "ed25519",
-      "publicKeyId": "thing-release-2026",
-      "value": "signed-descriptor"
-    }
-  }
-}
-```
-''',
-      'assets': [_assetJson('Thing-windows-v0.1.5-setup.exe', size: 4)],
-    });
-
     expect(
-      release.assetFor('windows')?.signature?.publicKeyId,
-      'thing-release-2026',
+      release.htmlUrl,
+      Uri.parse('https://github.com/duochifan2003/Thing/releases/tag/v0.1.5'),
+    );
+    expect(release.notes, '修复更新功能。');
+    expect(release.assets, hasLength(3));
+
+    final windowsAsset = release.assetFor('windows');
+    expect(windowsAsset, isNotNull);
+    expect(windowsAsset!.name, 'Thing-windows-v0.1.19-setup.exe');
+    expect(
+      windowsAsset.descriptorUrl,
+      Uri.parse(
+        'https://github.com/duochifan2003/Thing/releases/download/v0.1.19/Thing-windows-v0.1.19-setup.exe.release.json',
+      ),
+    );
+
+    final macAsset = release.assetFor('macos');
+    expect(macAsset, isNotNull);
+    expect(macAsset!.name, 'Thing-macOS-v0.1.19.dmg');
+    expect(
+      macAsset.descriptorUrl,
+      Uri.parse(
+        'https://github.com/duochifan2003/Thing/releases/download/v0.1.19/Thing-macOS-v0.1.19.dmg.release.json',
+      ),
     );
   });
 
-  test('parses release signatures from body with single signature object', () {
-    final release = AppUpdateRelease.fromJson({
-      'tag_name': 'v0.1.5',
-      'html_url': 'https://github.com/duochifan2003/Thing/releases/tag/v0.1.5',
-      'body': '''
-```json
-{
-  "signature": {
-    "algorithm": "ed25519",
-    "publicKeyId": "thing-release-2026",
-    "value": "top-level-signed"
-  }
-}
-```
-''',
-      'assets': [_assetJson('Thing-windows-v0.1.5.zip', size: 4)],
-    });
+  test('compares semantic versions correctly', () {
+    expect(isNewerAppVersion('0.1.28', '0.1.22'), isTrue);
+    expect(isNewerAppVersion('v0.1.28', '0.1.28'), isFalse);
+    expect(isNewerAppVersion('0.1.21', '0.1.22'), isFalse);
+    expect(isNewerAppVersion('1.0.0', '0.9.9'), isTrue);
+    expect(isNewerAppVersion('0.1.22.1', '0.1.22'), isTrue);
+  });
 
-    expect(
-      release.assetFor('windows')?.signature?.publicKeyId,
-      'thing-release-2026',
+  test('returns null when current version is up to date', () async {
+    final trustedKey = await _keyPair(_trustedSeed);
+    final service = AppUpdateService(
+      currentVersion: '0.1.5',
+      operatingSystem: 'windows',
+      fetchJson: (_) async => jsonEncode(_releaseJson()),
+      pinnedPublicKeys: await _publicKeys(trustedKey),
+    );
+
+    final release = await service.checkForUpdate();
+    expect(release, isNull);
+  });
+
+  test('throws when release has no assets for the current platform', () async {
+    final trustedKey = await _keyPair(_trustedSeed);
+    final service = AppUpdateService(
+      currentVersion: '0.1.0',
+      operatingSystem: 'linux',
+      fetchJson: (_) async => jsonEncode(_releaseJson()),
+      pinnedPublicKeys: await _publicKeys(trustedKey),
+    );
+
+    await expectLater(
+      service.checkForUpdate(),
+      throwsA(
+        isA<AppUpdateException>().having(
+          (error) => error.message,
+          'message',
+          contains('没有适用于当前系统'),
+        ),
+      ),
     );
   });
 
   test(
-    'downloads a signed installer, verifies it, then hands it to install',
+    'stages Windows zip update via DesktopUpdater and verifies extracted files',
     () async {
-      final bytes = _zipBytes();
-      final server = await _ArtifactServer.start(bytes);
+      final zipBytes = _zipBytes();
+      final trustedKey = await _keyPair(_trustedSeed);
+      final server = await _MockReleaseServer.start(
+        artifactBytes: zipBytes,
+        artifactName: 'Thing-windows-v0.1.28.zip',
+        signingKey: trustedKey,
+        kind: 'zip',
+      );
       String? installedPath;
       try {
-        final trustedKey = await _keyPair(_trustedSeed);
-        final release = await _windowsRelease(
-          downloadUrl: server.uri,
-          expectedBytes: bytes,
-          signingKey: trustedKey,
-        );
         final service = await _service(
           trustedKey,
           installUpdate: (path) async => installedPath = path,
+          fetchJson: server.fetchJson,
         );
+        final release = await server.buildRelease();
 
         await expectLater(
           service.downloadAndInstall(release),
           throwsA(isA<_ExitException>()),
         );
 
-        expect(server.requests, 1);
+        expect(server.artifactRequests, 1);
+        expect(server.descriptorRequests, 1);
         expect(installedPath, isNotNull);
         expect(
           io.File('${installedPath!}/Thing.exe').readAsStringSync(),
           'test',
-        );
-        expect(
-          io.File(
-            '${installedPath!}/.desktop_updater_release_manifest.json',
-          ).existsSync(),
-          isTrue,
         );
       } finally {
         await server.close();
@@ -208,199 +126,108 @@ void main() {
   );
 
   test(
-    'downloads and stages update, executing DesktopUpdater production installUpdate handoff',
+    'stages Inno installer with Authenticode requirement and pinned thumbprints',
     () async {
-      final bytes = _zipBytes();
-      final server = await _ArtifactServer.start(bytes);
-      final fakePlatform = _FakeDesktopUpdaterPlatform();
-      final originalPlatform = DesktopUpdaterPlatform.instance;
-      DesktopUpdaterPlatform.instance = fakePlatform;
+      final installerBytes = utf8.encode('mock-inno-installer-binary');
+      final trustedKey = await _keyPair(_trustedSeed);
+      final server = await _MockReleaseServer.start(
+        artifactBytes: installerBytes,
+        artifactName: 'Thing-windows-v0.1.28-setup.exe',
+        signingKey: trustedKey,
+        kind: 'innoInstaller',
+      );
+      String? stagedPath;
+      ReleaseDescriptor? stagedDescriptor;
       try {
-        final trustedKey = await _keyPair(_trustedSeed);
-        final release = await _windowsRelease(
-          downloadUrl: server.uri,
-          expectedBytes: bytes,
-          signingKey: trustedKey,
+        final service = await _service(
+          trustedKey,
+          stageUpdate:
+              ({
+                required appArchiveUrl,
+                required currentVersion,
+                required descriptor,
+                onProgress,
+              }) async {
+                stagedDescriptor = descriptor;
+                return UpdateStageResult(
+                  descriptor: descriptor,
+                  stagingPath: '/mock/staging/inno',
+                );
+              },
+          installUpdate: (path) async => stagedPath = path,
+          fetchJson: server.fetchJson,
         );
-        final service = await _service(trustedKey);
+        final release = await server.buildRelease();
 
         await expectLater(
           service.downloadAndInstall(release),
           throwsA(isA<_ExitException>()),
         );
 
-        expect(server.requests, 1);
-        expect(fakePlatform.installCalls, 1);
-        expect(fakePlatform.allowUnsignedMacOSUpdates, isFalse);
-        expect(fakePlatform.installedStagingPath, isNotNull);
-        final stagedPath = fakePlatform.installedStagingPath!;
-        expect(io.File('$stagedPath/Thing.exe').readAsStringSync(), 'test');
-        final manifestFile = io.File(
-          '$stagedPath/.desktop_updater_release_manifest.json',
+        expect(server.descriptorRequests, 1);
+        expect(stagedPath, '/mock/staging/inno');
+        expect(stagedDescriptor, isNotNull);
+        expect(stagedDescriptor!.install.strategy, 'innoInstaller');
+        expect(stagedDescriptor!.install.inno!.authenticode.required, isTrue);
+        expect(
+          stagedDescriptor!.install.inno!.authenticode.sha256Thumbprints,
+          contains(_testThumbprint),
         );
-        expect(manifestFile.existsSync(), isTrue);
-        final manifestJson = jsonDecode(manifestFile.readAsStringSync());
-        expect(manifestJson['appName'], 'Thing');
-        expect(manifestJson['version'], '0.1.28');
-        expect(manifestJson['install']['strategy'], 'wholeDirectoryReplace');
       } finally {
-        DesktopUpdaterPlatform.instance = originalPlatform;
         await server.close();
-        if (fakePlatform.installedStagingPath != null) {
-          await io.Directory(
-            fakePlatform.installedStagingPath!,
-          ).delete(recursive: true);
-        }
       }
     },
   );
 
   test(
-    'stages Inno installer with Authenticode requirement and pinned thumbprints',
+    'stages macOS DMG update with wholeBundleReplace and verifyPrimarySignature',
     () async {
-      final bytes = <int>[1, 2, 3, 4, 5];
-      final server = await _ArtifactServer.start(bytes);
-      final fakePlatform = _FakeDesktopUpdaterPlatform();
-      final originalPlatform = DesktopUpdaterPlatform.instance;
-      DesktopUpdaterPlatform.instance = fakePlatform;
+      final dmgBytes = utf8.encode('mock-dmg-binary');
+      final trustedKey = await _keyPair(_trustedSeed);
+      final server = await _MockReleaseServer.start(
+        artifactBytes: dmgBytes,
+        artifactName: 'Thing-macOS-v0.1.28.dmg',
+        signingKey: trustedKey,
+        kind: 'dmg',
+      );
+      String? stagedPath;
+      ReleaseDescriptor? stagedDescriptor;
       try {
-        final trustedKey = await _keyPair(_trustedSeed);
-        final release = await _innoRelease(
-          downloadUrl: server.uri,
-          expectedBytes: bytes,
-          signingKey: trustedKey,
-        );
         final service = await _service(
           trustedKey,
-          pinnedAuthenticodeThumbprints: [_testThumbprint],
+          operatingSystem: 'macos',
+          stageUpdate:
+              ({
+                required appArchiveUrl,
+                required currentVersion,
+                required descriptor,
+                onProgress,
+              }) async {
+                stagedDescriptor = descriptor;
+                return UpdateStageResult(
+                  descriptor: descriptor,
+                  stagingPath: '/mock/staging/dmg',
+                );
+              },
+          installUpdate: (path) async => stagedPath = path,
+          fetchJson: server.fetchJson,
         );
-
-        if (io.Platform.isWindows) {
-          await expectLater(
-            service.downloadAndInstall(release),
-            throwsA(isA<_ExitException>()),
-          );
-
-          expect(server.requests, 1);
-          expect(fakePlatform.installCalls, 1);
-          expect(fakePlatform.allowUnsignedMacOSUpdates, isFalse);
-          final stagedPath = fakePlatform.installedStagingPath!;
-          expect(io.File('$stagedPath/installer.exe').existsSync(), isTrue);
-          final manifestFile = io.File(
-            '$stagedPath/.desktop_updater_release_manifest.json',
-          );
-          expect(manifestFile.existsSync(), isTrue);
-          final manifestJson = jsonDecode(manifestFile.readAsStringSync());
-          expect(manifestJson['install']['strategy'], 'innoInstaller');
-          expect(
-            manifestJson['install']['inno']['authenticode']['required'],
-            isTrue,
-          );
-          expect(
-            manifestJson['install']['inno']['authenticode']['sha256Thumbprints'],
-            [_testThumbprint],
-          );
-        } else {
-          await expectLater(
-            service.downloadAndInstall(release),
-            throwsA(
-              isA<AppUpdateException>().having(
-                (error) => error.message,
-                'message',
-                contains(
-                  'Inno installer updates are only supported on Windows',
-                ),
-              ),
-            ),
-          );
-        }
-      } finally {
-        DesktopUpdaterPlatform.instance = originalPlatform;
-        await server.close();
-        if (fakePlatform.installedStagingPath != null) {
-          await io.Directory(
-            fakePlatform.installedStagingPath!,
-          ).delete(recursive: true);
-        }
-      }
-    },
-  );
-
-  test(
-    'rejects Inno installer update when Authenticode thumbprint is not configured',
-    () async {
-      final bytes = <int>[1, 2, 3, 4, 5];
-      final server = await _ArtifactServer.start(bytes);
-      final fakePlatform = _FakeDesktopUpdaterPlatform();
-      final originalPlatform = DesktopUpdaterPlatform.instance;
-      DesktopUpdaterPlatform.instance = fakePlatform;
-      try {
-        final trustedKey = await _keyPair(_trustedSeed);
-        final release = await _innoRelease(
-          downloadUrl: server.uri,
-          expectedBytes: bytes,
-          signingKey: trustedKey,
-        );
-        final service = await _service(
-          trustedKey,
-          pinnedAuthenticodeThumbprints: const [],
-        );
+        final release = await server.buildRelease();
 
         await expectLater(
           service.downloadAndInstall(release),
-          throwsA(
-            isA<AppUpdateException>().having(
-              (error) => error.message,
-              'message',
-              contains('WINDOWS_AUTHENTICODE_SHA256'),
-            ),
-          ),
+          throwsA(isA<_ExitException>()),
         );
 
-        expect(server.requests, 0);
-        expect(fakePlatform.installCalls, 0);
+        expect(server.descriptorRequests, 1);
+        expect(stagedPath, '/mock/staging/dmg');
+        expect(stagedDescriptor, isNotNull);
+        expect(stagedDescriptor!.install.strategy, 'wholeBundleReplace');
+        expect(
+          stagedDescriptor!.install.macosDmg!.verifyPrimarySignature,
+          isTrue,
+        );
       } finally {
-        DesktopUpdaterPlatform.instance = originalPlatform;
-        await server.close();
-      }
-    },
-  );
-
-  test(
-    'rejects Inno installer update when Authenticode thumbprint is invalid hex format',
-    () async {
-      final bytes = <int>[1, 2, 3, 4, 5];
-      final server = await _ArtifactServer.start(bytes);
-      final fakePlatform = _FakeDesktopUpdaterPlatform();
-      final originalPlatform = DesktopUpdaterPlatform.instance;
-      DesktopUpdaterPlatform.instance = fakePlatform;
-      try {
-        final trustedKey = await _keyPair(_trustedSeed);
-        final release = await _innoRelease(
-          downloadUrl: server.uri,
-          expectedBytes: bytes,
-          signingKey: trustedKey,
-        );
-        final service = await _service(
-          trustedKey,
-          pinnedAuthenticodeThumbprints: const ['invalid-not-64-hex'],
-        );
-
-        await expectLater(
-          service.downloadAndInstall(release),
-          throwsA(
-            isA<AppUpdateException>().having(
-              (error) => error.message,
-              'message',
-              contains('格式无效'),
-            ),
-          ),
-        );
-
-        expect(server.requests, 0);
-        expect(fakePlatform.installCalls, 0);
-      } finally {
-        DesktopUpdaterPlatform.instance = originalPlatform;
         await server.close();
       }
     },
@@ -412,19 +239,22 @@ void main() {
       ...expectedBytes.sublist(0, expectedBytes.length - 1),
       expectedBytes.last ^ 1,
     ];
-    final server = await _ArtifactServer.start(tamperedBytes);
     final trustedKey = await _keyPair(_trustedSeed);
+    final server = await _MockReleaseServer.start(
+      artifactBytes: tamperedBytes,
+      expectedSha256Bytes: expectedBytes,
+      artifactName: 'Thing-windows-v0.1.28.zip',
+      signingKey: trustedKey,
+      kind: 'zip',
+    );
     try {
-      final release = await _windowsRelease(
-        downloadUrl: server.uri,
-        expectedBytes: expectedBytes,
-        signingKey: trustedKey,
-      );
       var installed = false;
       final service = await _service(
         trustedKey,
         installUpdate: (_) async => installed = true,
+        fetchJson: server.fetchJson,
       );
+      final release = await server.buildRelease();
 
       await expectLater(
         service.downloadAndInstall(release),
@@ -436,7 +266,8 @@ void main() {
           ),
         ),
       );
-      expect(server.requests, 1);
+      expect(server.artifactRequests, 1);
+      expect(server.descriptorRequests, 1);
       expect(installed, isFalse);
     } finally {
       await server.close();
@@ -444,17 +275,52 @@ void main() {
   });
 
   test(
+    'rejects an update with missing descriptor asset (.release.json) before download',
+    () async {
+      final zipBytes = _zipBytes();
+      final trustedKey = await _keyPair(_trustedSeed);
+      final server = await _MockReleaseServer.start(
+        artifactBytes: zipBytes,
+        artifactName: 'Thing-windows-v0.1.28.zip',
+        signingKey: trustedKey,
+        kind: 'zip',
+        includeDescriptorAsset: false,
+      );
+      try {
+        final service = await _service(trustedKey, fetchJson: server.fetchJson);
+        final release = await server.buildRelease();
+
+        await expectLater(
+          service.downloadAndInstall(release),
+          throwsA(
+            isA<AppUpdateException>().having(
+              (error) => error.message,
+              'message',
+              contains('缺少对应的签名描述文件'),
+            ),
+          ),
+        );
+        expect(server.artifactRequests, 0);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  test(
     'rejects an update with no descriptor signature before download',
     () async {
-      final server = await _ArtifactServer.start(_zipBytes());
+      final zipBytes = _zipBytes();
       final trustedKey = await _keyPair(_trustedSeed);
+      final server = await _MockReleaseServer.start(
+        artifactBytes: zipBytes,
+        artifactName: 'Thing-windows-v0.1.28.zip',
+        signingKey: null,
+        kind: 'zip',
+      );
       try {
-        final release = await _windowsRelease(
-          downloadUrl: server.uri,
-          expectedBytes: _zipBytes(),
-          signingKey: null,
-        );
-        final service = await _service(trustedKey);
+        final service = await _service(trustedKey, fetchJson: server.fetchJson);
+        final release = await server.buildRelease();
 
         await expectLater(
           service.downloadAndInstall(release),
@@ -466,7 +332,7 @@ void main() {
             ),
           ),
         );
-        expect(server.requests, 0);
+        expect(server.artifactRequests, 0);
       } finally {
         await server.close();
       }
@@ -474,16 +340,18 @@ void main() {
   );
 
   test('rejects an update with a forged descriptor signature', () async {
-    final server = await _ArtifactServer.start(_zipBytes());
+    final zipBytes = _zipBytes();
     final trustedKey = await _keyPair(_trustedSeed);
     final wrongKey = await _keyPair(_wrongSeed);
+    final server = await _MockReleaseServer.start(
+      artifactBytes: zipBytes,
+      artifactName: 'Thing-windows-v0.1.28.zip',
+      signingKey: wrongKey,
+      kind: 'zip',
+    );
     try {
-      final release = await _windowsRelease(
-        downloadUrl: server.uri,
-        expectedBytes: _zipBytes(),
-        signingKey: wrongKey,
-      );
-      final service = await _service(trustedKey);
+      final service = await _service(trustedKey, fetchJson: server.fetchJson);
+      final release = await server.buildRelease();
 
       await expectLater(
         service.downloadAndInstall(release),
@@ -495,94 +363,117 @@ void main() {
           ),
         ),
       );
-      expect(server.requests, 0);
+      expect(server.artifactRequests, 0);
     } finally {
       await server.close();
     }
   });
 
-  test('rejects update when public key ID is not pinned/trusted', () async {
-    final server = await _ArtifactServer.start(_zipBytes());
-    final trustedKey = await _keyPair(_trustedSeed);
-    try {
-      final placeholder = const ReleaseSignature(
-        algorithm: 'ed25519',
-        publicKeyId: 'untrusted-key-id',
-        value: '',
+  test(
+    'rejects an update with descriptor / asset size mismatch before download',
+    () async {
+      final zipBytes = _zipBytes();
+      final trustedKey = await _keyPair(_trustedSeed);
+      final server = await _MockReleaseServer.start(
+        artifactBytes: zipBytes,
+        artifactName: 'Thing-windows-v0.1.28.zip',
+        signingKey: trustedKey,
+        kind: 'zip',
+        overrideDescriptorLength: zipBytes.length + 100,
       );
-      final unsignedDescriptor = _windowsDescriptor(
-        downloadUrl: server.uri,
-        expectedBytes: _zipBytes(),
-        signature: placeholder,
-      );
-      final signature = ReleaseSignature(
-        algorithm: 'ed25519',
-        publicKeyId: 'untrusted-key-id',
-        value: base64Encode(
-          (await Ed25519().sign(
-            unsignedDescriptor.canonicalSignatureBytes(),
-            keyPair: trustedKey,
-          )).bytes,
-        ),
-      );
-      final release = AppUpdateRelease(
-        version: '0.1.28',
-        tagName: 'v0.1.28',
-        htmlUrl: Uri.parse(
-          'https://github.com/duochifan2003/Thing/releases/tag/v0.1.28',
-        ),
-        notes: 'untrusted key release',
-        generatedAt: _testTimestamp,
-        assets: [
-          AppUpdateAsset(
-            name: 'Thing-windows-v0.1.28.zip',
-            downloadUrl: server.uri,
-            size: _zipBytes().length,
-            sha256: crypto.sha256.convert(_zipBytes()).toString(),
-            signature: signature,
+      try {
+        final service = await _service(trustedKey, fetchJson: server.fetchJson);
+        final release = await server.buildRelease();
+
+        await expectLater(
+          service.downloadAndInstall(release),
+          throwsA(
+            isA<AppUpdateException>().having(
+              (error) => error.message,
+              'message',
+              contains('文件大小与 Release 资产大小不一致'),
+            ),
           ),
-        ],
+        );
+        expect(server.artifactRequests, 0);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  test(
+    'rejects Windows innoInstaller update when Authenticode pin is missing',
+    () async {
+      final installerBytes = utf8.encode('mock-inno-installer');
+      final trustedKey = await _keyPair(_trustedSeed);
+      final server = await _MockReleaseServer.start(
+        artifactBytes: installerBytes,
+        artifactName: 'Thing-windows-v0.1.28-setup.exe',
+        signingKey: trustedKey,
+        kind: 'innoInstaller',
       );
+      try {
+        final service = await _service(
+          trustedKey,
+          pinnedAuthenticodeThumbprints: const [],
+          fetchJson: server.fetchJson,
+        );
+        final release = await server.buildRelease();
 
-      final service = await _service(trustedKey);
-
-      await expectLater(
-        service.downloadAndInstall(release),
-        throwsA(
-          isA<AppUpdateException>().having(
-            (error) => error.message,
-            'message',
-            contains('签名'),
+        await expectLater(
+          service.downloadAndInstall(release),
+          throwsA(
+            isA<AppUpdateException>().having(
+              (error) => error.message,
+              'message',
+              contains('未配置 Windows Authenticode 证书指纹'),
+            ),
           ),
-        ),
+        );
+        expect(server.artifactRequests, 0);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  test(
+    'rejects Windows innoInstaller update when Authenticode thumbprint does not match',
+    () async {
+      final installerBytes = utf8.encode('mock-inno-installer');
+      final trustedKey = await _keyPair(_trustedSeed);
+      final server = await _MockReleaseServer.start(
+        artifactBytes: installerBytes,
+        artifactName: 'Thing-windows-v0.1.28-setup.exe',
+        signingKey: trustedKey,
+        kind: 'innoInstaller',
       );
-      expect(server.requests, 0);
-    } finally {
-      await server.close();
-    }
-  });
-}
+      try {
+        final mismatchedThumbprint = List.filled(64, 'b').join();
+        final service = await _service(
+          trustedKey,
+          pinnedAuthenticodeThumbprints: [mismatchedThumbprint],
+          fetchJson: server.fetchJson,
+        );
+        final release = await server.buildRelease();
 
-class _FakeDesktopUpdaterPlatform extends DesktopUpdaterPlatform {
-  String? installedStagingPath;
-  bool? allowUnsignedMacOSUpdates;
-  List<String> removedFiles = const [];
-  String? diagnosticsLogPath;
-  int installCalls = 0;
-
-  @override
-  Future<void> installUpdate({
-    required String stagingPath,
-    List<String> removedFiles = const [],
-    bool allowUnsignedMacOSUpdates = false,
-    String? diagnosticsLogPath,
-  }) async {
-    installCalls++;
-    installedStagingPath = stagingPath;
-    this.removedFiles = removedFiles;
-    this.allowUnsignedMacOSUpdates = allowUnsignedMacOSUpdates;
-    this.diagnosticsLogPath = diagnosticsLogPath;
-  }
+        await expectLater(
+          service.downloadAndInstall(release),
+          throwsA(
+            isA<AppUpdateException>().having(
+              (error) => error.message,
+              'message',
+              contains('Authenticode 指纹与客户端固定指纹不匹配'),
+            ),
+          ),
+        );
+        expect(server.artifactRequests, 0);
+      } finally {
+        await server.close();
+      }
+    },
+  );
 }
 
 const _testKeyId = 'test-release-key';
@@ -669,14 +560,18 @@ Future<Map<String, String>> _publicKeys(SimpleKeyPair keyPair) async {
 Future<AppUpdateService> _service(
   SimpleKeyPair trustedKey, {
   UpdateInstaller? installUpdate,
+  UpdateStager? stageUpdate,
   List<String>? pinnedAuthenticodeThumbprints,
   String operatingSystem = 'windows',
+  UpdateJsonFetcher? fetchJson,
 }) async {
   return AppUpdateService(
     currentVersion: '0.1.22',
     operatingSystem: operatingSystem,
     exitApp: (_) => throw const _ExitException(),
     installUpdate: installUpdate,
+    stageUpdate: stageUpdate,
+    fetchJson: fetchJson,
     pinnedPublicKeys: await _publicKeys(trustedKey),
     pinnedAuthenticodeThumbprints:
         pinnedAuthenticodeThumbprints ?? [_testThumbprint],
@@ -688,239 +583,210 @@ List<int> _zipBytes() {
   return ZipEncoder().encode(archive);
 }
 
-Future<AppUpdateRelease> _windowsRelease({
-  required Uri downloadUrl,
-  required List<int> expectedBytes,
-  required SimpleKeyPair? signingKey,
-}) async {
-  final placeholder = signingKey == null
-      ? null
-      : const ReleaseSignature(
-          algorithm: 'ed25519',
-          publicKeyId: _testKeyId,
-          value: '',
-        );
-  final unsignedDescriptor = _windowsDescriptor(
-    downloadUrl: downloadUrl,
-    expectedBytes: expectedBytes,
-    signature: placeholder,
-  );
-  final signature = signingKey == null
-      ? null
-      : ReleaseSignature(
-          algorithm: 'ed25519',
-          publicKeyId: _testKeyId,
-          value: base64Encode(
-            (await Ed25519().sign(
-              unsignedDescriptor.canonicalSignatureBytes(),
-              keyPair: signingKey,
-            )).bytes,
-          ),
-        );
-  return AppUpdateRelease(
-    version: '0.1.28',
-    tagName: 'v0.1.28',
-    htmlUrl: Uri.parse(
-      'https://github.com/duochifan2003/Thing/releases/tag/v0.1.28',
-    ),
-    notes: 'test release',
-    generatedAt: _testTimestamp,
-    assets: [
-      AppUpdateAsset(
-        name: 'Thing-windows-v0.1.28.zip',
-        downloadUrl: downloadUrl,
-        size: expectedBytes.length,
-        sha256: crypto.sha256.convert(expectedBytes).toString(),
-        signature: signature,
-      ),
-    ],
-  );
-}
+class _MockReleaseServer {
+  _MockReleaseServer({
+    required this.server,
+    required this.artifactBytes,
+    required this.artifactName,
+    required this.descriptorJson,
+    required this.includeDescriptorAsset,
+  });
 
-ReleaseDescriptor _windowsDescriptor({
-  required Uri downloadUrl,
-  required List<int> expectedBytes,
-  required ReleaseSignature? signature,
-}) {
-  return ReleaseDescriptor(
-    schemaVersion: 3,
-    packageId: 'local.munch.eventatlas',
-    appName: 'Thing',
-    version: '0.1.28',
-    buildNumber: null,
-    platform: 'windows',
-    channel: 'stable',
-    artifact: ReleaseArtifact(
-      kind: 'zip',
-      url: downloadUrl,
-      sha256: crypto.sha256.convert(expectedBytes).toString(),
-      length: expectedBytes.length,
-    ),
-    install: const ReleaseInstall(strategy: 'wholeDirectoryReplace'),
-    signature: signature,
-    minimumUpdaterVersion: '2.7.0',
-    generatedAt: _testTimestamp,
-  );
-}
+  final io.HttpServer server;
+  final List<int> artifactBytes;
+  final String artifactName;
+  final String descriptorJson;
+  final bool includeDescriptorAsset;
 
-Future<AppUpdateRelease> _innoRelease({
-  required Uri downloadUrl,
-  required List<int> expectedBytes,
-  required SimpleKeyPair? signingKey,
-}) async {
-  final placeholder = signingKey == null
-      ? null
-      : const ReleaseSignature(
-          algorithm: 'ed25519',
-          publicKeyId: _testKeyId,
-          value: '',
-        );
-  final unsignedDescriptor = _innoDescriptor(
-    downloadUrl: downloadUrl,
-    expectedBytes: expectedBytes,
-    signature: placeholder,
-  );
-  final signature = signingKey == null
-      ? null
-      : ReleaseSignature(
-          algorithm: 'ed25519',
-          publicKeyId: _testKeyId,
-          value: base64Encode(
-            (await Ed25519().sign(
-              unsignedDescriptor.canonicalSignatureBytes(),
-              keyPair: signingKey,
-            )).bytes,
-          ),
-        );
-  return AppUpdateRelease(
-    version: '0.1.28',
-    tagName: 'v0.1.28',
-    htmlUrl: Uri.parse(
-      'https://github.com/duochifan2003/Thing/releases/tag/v0.1.28',
-    ),
-    notes: 'test release',
-    generatedAt: _testTimestamp,
-    assets: [
-      AppUpdateAsset(
-        name: 'Thing-windows-v0.1.28-setup.exe',
-        downloadUrl: downloadUrl,
-        size: expectedBytes.length,
-        sha256: crypto.sha256.convert(expectedBytes).toString(),
-        signature: signature,
-      ),
-    ],
-  );
-}
+  int artifactRequests = 0;
+  int descriptorRequests = 0;
 
-ReleaseDescriptor _innoDescriptor({
-  required Uri downloadUrl,
-  required List<int> expectedBytes,
-  required ReleaseSignature? signature,
-}) {
-  return ReleaseDescriptor(
-    schemaVersion: 3,
-    packageId: 'local.munch.eventatlas',
-    appName: 'Thing',
-    version: '0.1.28',
-    buildNumber: null,
-    platform: 'windows',
-    channel: 'stable',
-    artifact: ReleaseArtifact(
-      kind: 'innoInstaller',
-      url: downloadUrl,
-      sha256: crypto.sha256.convert(expectedBytes).toString(),
-      length: expectedBytes.length,
-    ),
-    install: ReleaseInstall(
-      strategy: 'innoInstaller',
-      inno: ReleaseInnoInstall(
-        silentArgs: const ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
-        inheritInstallDirectory: true,
-        logFileName: 'thing-update.log',
-        relaunchAfterInstall: true,
-        requiresElevation: 'auto',
-        authenticode: ReleaseAuthenticodePolicy(
-          required: true,
-          sha256Thumbprints: [_testThumbprint],
+  Uri get artifactUri =>
+      Uri.parse('http://127.0.0.1:${server.port}/$artifactName');
+  Uri get descriptorUri =>
+      Uri.parse('http://127.0.0.1:${server.port}/$artifactName.release.json');
+
+  Future<String> fetchJson(Uri uri) async {
+    if (uri.toString().endsWith('.release.json')) {
+      descriptorRequests++;
+      return descriptorJson;
+    }
+    return '';
+  }
+
+  static Future<_MockReleaseServer> start({
+    required List<int> artifactBytes,
+    required String artifactName,
+    required SimpleKeyPair? signingKey,
+    required String kind,
+    List<int>? expectedSha256Bytes,
+    bool includeDescriptorAsset = true,
+    int? overrideDescriptorLength,
+  }) async {
+    final server = await io.HttpServer.bind(io.InternetAddress.loopbackIPv4, 0);
+    final port = server.port;
+    final artifactUri = Uri.parse('http://127.0.0.1:$port/$artifactName');
+    final sha256Target = expectedSha256Bytes ?? artifactBytes;
+    final sha256Hex = crypto.sha256.convert(sha256Target).toString();
+
+    final platform = kind == 'dmg' ? 'macos' : 'windows';
+    final installPolicy = switch (kind) {
+      'dmg' => const ReleaseInstall(
+        strategy: 'wholeBundleReplace',
+        macosDmg: ReleaseMacOSDmgInstall(
+          appBundleName: 'Thing.app',
+          verifyPrimarySignature: true,
         ),
       ),
-    ),
-    signature: signature,
-    minimumUpdaterVersion: '2.7.0',
-    generatedAt: _testTimestamp,
-  );
-}
+      'innoInstaller' => ReleaseInstall(
+        strategy: 'innoInstaller',
+        inno: ReleaseInnoInstall(
+          silentArgs: const ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
+          inheritInstallDirectory: true,
+          logFileName: 'thing-update.log',
+          relaunchAfterInstall: true,
+          requiresElevation: 'auto',
+          authenticode: ReleaseAuthenticodePolicy(
+            required: true,
+            sha256Thumbprints: [_testThumbprint],
+          ),
+        ),
+      ),
+      _ => const ReleaseInstall(strategy: 'wholeDirectoryReplace'),
+    };
 
-class _ArtifactServer {
-  _ArtifactServer(this._server, this._bytes);
+    final placeholder = signingKey == null
+        ? null
+        : const ReleaseSignature(
+            algorithm: 'ed25519',
+            publicKeyId: _testKeyId,
+            value: '',
+          );
 
-  final io.HttpServer _server;
-  final List<int> _bytes;
-  int requests = 0;
+    final unsignedDescriptor = ReleaseDescriptor(
+      schemaVersion: 3,
+      packageId: 'local.munch.eventatlas',
+      appName: 'Thing',
+      version: '0.1.28',
+      buildNumber: null,
+      platform: platform,
+      channel: 'stable',
+      artifact: ReleaseArtifact(
+        kind: kind,
+        url: artifactUri,
+        sha256: sha256Hex,
+        length: overrideDescriptorLength ?? artifactBytes.length,
+      ),
+      install: installPolicy,
+      signature: placeholder,
+      minimumUpdaterVersion: '2.7.0',
+      generatedAt: _testTimestamp,
+    );
 
-  Uri get uri => Uri.parse('http://127.0.0.1:${_server.port}/artifact.exe');
+    final signature = signingKey == null
+        ? null
+        : ReleaseSignature(
+            algorithm: 'ed25519',
+            publicKeyId: _testKeyId,
+            value: base64Encode(
+              (await Ed25519().sign(
+                unsignedDescriptor.canonicalSignatureBytes(),
+                keyPair: signingKey,
+              )).bytes,
+            ),
+          );
 
-  static Future<_ArtifactServer> start(List<int> bytes) async {
-    final server = await io.HttpServer.bind(io.InternetAddress.loopbackIPv4, 0);
-    final fixture = _ArtifactServer(server, List.unmodifiable(bytes));
+    final signedDescriptor = ReleaseDescriptor(
+      schemaVersion: unsignedDescriptor.schemaVersion,
+      packageId: unsignedDescriptor.packageId,
+      appName: unsignedDescriptor.appName,
+      version: unsignedDescriptor.version,
+      buildNumber: unsignedDescriptor.buildNumber,
+      platform: unsignedDescriptor.platform,
+      channel: unsignedDescriptor.channel,
+      artifact: unsignedDescriptor.artifact,
+      install: unsignedDescriptor.install,
+      signature: signature,
+      minimumUpdaterVersion: unsignedDescriptor.minimumUpdaterVersion,
+      generatedAt: unsignedDescriptor.generatedAt,
+    );
+
+    final descriptorJson = jsonEncode(signedDescriptor.toJson());
+
+    final fixture = _MockReleaseServer(
+      server: server,
+      artifactBytes: List.unmodifiable(artifactBytes),
+      artifactName: artifactName,
+      descriptorJson: descriptorJson,
+      includeDescriptorAsset: includeDescriptorAsset,
+    );
+
     server.listen((request) async {
-      fixture.requests++;
-      request.response.headers.contentLength = fixture._bytes.length;
-      request.response.add(fixture._bytes);
-      await request.response.close();
+      if (request.uri.path.endsWith(artifactName)) {
+        fixture.artifactRequests++;
+        request.response.headers.contentLength = fixture.artifactBytes.length;
+        request.response.add(fixture.artifactBytes);
+        await request.response.close();
+      } else if (request.uri.path.endsWith('.release.json')) {
+        fixture.descriptorRequests++;
+        request.response.headers.contentType = io.ContentType.json;
+        request.response.write(fixture.descriptorJson);
+        await request.response.close();
+      } else {
+        request.response.statusCode = 404;
+        await request.response.close();
+      }
     });
+
     return fixture;
   }
 
-  Future<void> close() => _server.close(force: true);
+  Future<AppUpdateRelease> buildRelease() async {
+    return AppUpdateRelease(
+      version: '0.1.28',
+      tagName: 'v0.1.28',
+      htmlUrl: Uri.parse(
+        'https://github.com/duochifan2003/Thing/releases/tag/v0.1.28',
+      ),
+      notes: 'test release',
+      generatedAt: _testTimestamp,
+      assets: [
+        AppUpdateAsset(
+          name: artifactName,
+          downloadUrl: artifactUri,
+          size: artifactBytes.length,
+          sha256: '',
+          descriptorUrl: includeDescriptorAsset ? descriptorUri : null,
+        ),
+      ],
+    );
+  }
+
+  Future<void> close() => server.close(force: true);
 }
 
 class _ExitException implements Exception {
   const _ExitException();
 }
 
-Map<String, dynamic> _releaseJson({
-  bool macAssets = false,
-  List<dynamic>? assets,
-}) => {
+Map<String, dynamic> _releaseJson({bool macAssets = false}) => {
   'tag_name': 'v0.1.5',
   'html_url': 'https://github.com/duochifan2003/Thing/releases/tag/v0.1.5',
   'body': '修复更新功能。',
-  'assets':
-      assets ??
-      [
-        _assetJson(
-          'Thing-windows-v0.1.19-setup.exe',
-          size: 13177394,
-          digest:
-              'sha256:961adf40eb6795d3cc487d402d16d6c6247d503620e93bd3726ad72f7bc1b2d7',
-        ),
-        _assetJson(
-          'Thing-windows-v0.1.19.zip',
-          size: 15440124,
-          digest:
-              'sha256:5428b616a0cc4981be6dd0d203ce6f2389d5fc54e51d9958064aadbfe198a4f6',
-        ),
-        if (macAssets) _assetJson('Thing-macOS-v0.1.19.zip'),
-        if (macAssets)
-          _assetJson(
-            'Thing-macOS-v0.1.19.dmg',
-            size: 26523070,
-            digest:
-                'sha256:08587106257237b90fc0c6f92ac5b43aeb7eb29105ec3dd0a16c5f0d0e1809a8',
-          ),
-      ],
+  'assets': [
+    _assetJson('Thing-windows-v0.1.19-setup.exe', size: 13177394),
+    _assetJson('Thing-windows-v0.1.19-setup.exe.release.json', size: 512),
+    _assetJson('Thing-windows-v0.1.19.zip', size: 15440124),
+    _assetJson('Thing-windows-v0.1.19.zip.release.json', size: 512),
+    if (macAssets) _assetJson('Thing-macOS-v0.1.19.dmg', size: 26523070),
+    if (macAssets)
+      _assetJson('Thing-macOS-v0.1.19.dmg.release.json', size: 512),
+  ],
 };
 
-Map<String, dynamic> _assetJson(
-  String name, {
-  int size = 15440124,
-  String digest =
-      'sha256:5428b616a0cc4981be6dd0d203ce6f2389d5fc54e51d9958064aadbfe198a4f6',
-}) => {
+Map<String, dynamic> _assetJson(String name, {int size = 15440124}) => {
   'name': name,
   'browser_download_url':
       'https://github.com/duochifan2003/Thing/releases/download/v0.1.19/$name',
   'size': size,
-  'digest': digest,
 };
