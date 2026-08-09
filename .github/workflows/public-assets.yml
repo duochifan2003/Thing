@@ -110,11 +110,14 @@ jobs:
       - run: flutter pub get
       - name: Build unsigned APK
         run: |
-          (cd android && ./gradlew app:assembleRelease -PpublicUnsigned)
           version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
           app_version=${version%%+*}
-          test -f build/app/outputs/apk/release/app-release-unsigned.apk
-          cp build/app/outputs/apk/release/app-release-unsigned.apk \
+          GRADLE_OPTS="-PpublicUnsigned" flutter build apk --release \
+            --dart-define=APP_VERSION="$app_version" \
+            --dart-define=APP_BUILD="${version#*+}"
+          apk=$(find build/app/outputs/apk/release -maxdepth 1 -name '*unsigned.apk' -print -quit)
+          test -n "$apk"
+          cp "$apk" \
             "build/Thing-android-v${app_version}-unsigned.apk"
       - uses: actions/upload-artifact@v4
         with:
