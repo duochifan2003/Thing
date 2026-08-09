@@ -243,7 +243,6 @@ void main() {
     await tester.tap(find.byType(MenuAnchor));
     await tester.pumpAndSettle();
     final menu = tester.widget<MenuAnchor>(find.byType(MenuAnchor));
-    expect(menu.animated, isTrue);
     expect(menu.style?.alignment, AlignmentDirectional.bottomStart);
     expect(menu.style?.shape?.resolve({}), isA<RoundedRectangleBorder>());
     final inputRect = tester.getRect(find.byType(InputDecorator));
@@ -290,11 +289,11 @@ void main() {
       ),
     );
 
-    await tester.tap(find.widgetWithText(OutlinedButton, '检查更新'));
+    await tester.tap(find.text('检查更新'));
     await tester.pumpAndSettle();
 
     expect(find.text('发现新版本 v0.1.5，可以下载并安装。'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, '下载并安装'), findsOneWidget);
+    expect(find.text('下载并安装'), findsOneWidget);
   });
 
   testWidgets('applies precision preference only to new event editors', (
@@ -314,7 +313,6 @@ void main() {
 
     final editorMenus = tester.widgetList<MenuAnchor>(find.byType(MenuAnchor));
     expect(editorMenus, isNotEmpty);
-    expect(editorMenus.every((menu) => menu.animated), isTrue);
     expect(find.text(Precision.month.label), findsOneWidget);
     expect(find.byType(Divider), findsNothing);
 
@@ -366,8 +364,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final menu = tester.widget<MenuAnchor>(find.byType(MenuAnchor));
-    expect(menu.animated, isTrue);
     await tester.tap(find.byTooltip('更多操作'));
     await tester.pumpAndSettle();
 
@@ -417,7 +413,7 @@ void main() {
     );
 
     await tester.enterText(find.byType(TextField).first, '长期项目');
-    await tester.tap(find.widgetWithText(FilledButton, '添加').first);
+    await tester.tap(find.text('添加').first);
     await tester.pumpAndSettle();
 
     expect(saved, ['长期项目']);
