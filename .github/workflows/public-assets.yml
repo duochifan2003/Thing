@@ -191,4 +191,5 @@ jobs:
             release/Thing-windows-"$RELEASE_TAG".zip \
             release/Thing-windows-v"$version"-setup.exe \
             release/Thing-android-v"$version"-unsigned.apk \
+            --clobber \
             --repo "$GITHUB_REPOSITORY"
