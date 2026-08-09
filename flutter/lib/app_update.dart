@@ -3,10 +3,7 @@ import 'dart:io' as io;
 
 import 'package:desktop_updater/desktop_updater.dart';
 
-const appVersion = String.fromEnvironment(
-  'APP_VERSION',
-  defaultValue: '0.0.0',
-);
+const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '0.0.0');
 const appBuild = String.fromEnvironment('APP_BUILD', defaultValue: '0');
 const appVersionLabel = 'v$appVersion+$appBuild';
 
