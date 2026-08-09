@@ -406,6 +406,20 @@ void main() {
     },
   );
 
+  test('parses and normalizes Authenticode thumbprints correctly', () {
+    expect(parseAuthenticodeThumbprints(''), isEmpty);
+    expect(parseAuthenticodeThumbprints('   '), isEmpty);
+    expect(parseAuthenticodeThumbprints('AA:BB:CC:DD${':00' * 28}'), [
+      'aabbccdd${'00' * 28}',
+    ]);
+    expect(
+      parseAuthenticodeThumbprints(
+        '  ${'11' * 32} , \n ${'22:33' * 16} ; ${'44' * 32}  ',
+      ),
+      ['11' * 32, '2233' * 16, '44' * 32],
+    );
+  });
+
   test('rejects a tampered artifact before installer handoff', () async {
     final expectedBytes = _zipBytes();
     final tamperedBytes = <int>[

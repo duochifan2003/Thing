@@ -261,12 +261,29 @@ jobs:
         env:
           WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
           WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          WINDOWS_AUTHENTICODE_SHA256: ${{ vars.WINDOWS_AUTHENTICODE_SHA256 }}
+          WINDOWS_AUTHENTICODE_SHA256: ${{ secrets.WINDOWS_AUTHENTICODE_SHA256 }}
         run: |
           if (-not $env:WINDOWS_SIGNING_CERTIFICATE -or -not $env:WINDOWS_SIGNING_PASSWORD) {
             throw 'Windows Authenticode credentials are required before publishing assets.'
           }
           $pfx = Join-Path $PWD 'build/signing.pfx'
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE))
+          $cert = Get-PfxCertificate -FilePath $pfx
+          $certThumbprint = $cert.Thumbprint.ToLower()
+          if (-not $env:WINDOWS_AUTHENTICODE_SHA256) { throw 'WINDOWS_AUTHENTICODE_SHA256 is required before publishing assets.' }
+          $expectedThumbprint = $env:WINDOWS_AUTHENTICODE_SHA256.Replace(':', '').Trim().ToLower()
+          if ($certThumbprint -ne $expectedThumbprint) {
+            throw "Certificate thumbprint ($certThumbprint) does not match configured WINDOWS_AUTHENTICODE_SHA256 ($expectedThumbprint)"
+          }
+          $cert = Get-PfxCertificate -FilePath $pfx
+          $certThumbprint = $cert.Thumbprint.ToLower()
+          if ($env:WINDOWS_AUTHENTICODE_SHA256) {
+            $expectedThumbprint = $env:WINDOWS_AUTHENTICODE_SHA256.Replace(':', '').Trim().ToLower()
+            if ($certThumbprint -ne $expectedThumbprint) {
+              throw "Certificate thumbprint ($certThumbprint) does not match configured WINDOWS_AUTHENTICODE_SHA256 ($expectedThumbprint)"
+            }
+          }
           $installer = Get-Item 'build/installer/Thing-windows-*-setup.exe'
           $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Select-Object -First 1).FullName
           if (-not $signtool) { throw 'signtool.exe was not found.' }
