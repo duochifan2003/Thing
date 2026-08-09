@@ -451,15 +451,15 @@ jobs:
             echo "Windows installer to upload is missing: release/$installer_name" >&2
             exit 1
           }
-          while IFS=$'\t' read -r asset expected; do
-            asset_path="release/$asset"
+          while IFS=$'\t' read -r asset source expected; do
+            asset_path="release/${source:-$asset}"
             [[ -f "$asset_path" ]] || { echo "Provenance asset is missing: $asset" >&2; exit 1; }
             actual=$(sha256sum "$asset_path" | cut -d' ' -f1)
             [[ "$actual" == "$expected" ]] || {
               echo "Asset SHA-256 mismatch for $asset" >&2
               exit 1
             }
-          done < <(jq -r '.assets[] | [.path, .sha256] | @tsv' release/release-provenance.json)
+          done < <(jq -r '.assets[] | [.path, (.source_path // .path), .sha256] | @tsv' release/release-provenance.json)
           [[ "$installer_name" =~ ^Thing-windows-v[0-9]+\.[0-9]+\.[0-9]+-setup\.exe$ ]] || {
             echo "Windows installer to upload has an unexpected name: $installer_name" >&2
             exit 1
