@@ -120,6 +120,8 @@ jobs:
         env:
           ORG_GRADLE_PROJECT_publicUnsigned: "true"
         run: |
+          sed -i 's/signingConfig = signingConfigs.getByName("debug")/signingConfig = null/' \
+            android/app/build.gradle.kts
           version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
           app_version=${version%%+*}
           flutter build apk --release \
