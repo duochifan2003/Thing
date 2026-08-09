@@ -289,7 +289,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.widgetWithText(OutlinedButton, '检查更新'));
+    await tester.tap(find.text('检查更新'));
     await tester.pumpAndSettle();
 
     expect(find.text('发现新版本 v0.1.5，可以下载并安装。'), findsOneWidget);
@@ -413,7 +413,7 @@ void main() {
     );
 
     await tester.enterText(find.byType(TextField).first, '长期项目');
-    await tester.tap(find.widgetWithText(FilledButton, '添加').first);
+    await tester.tap(find.text('添加').first);
     await tester.pumpAndSettle();
 
     expect(saved, ['长期项目']);
