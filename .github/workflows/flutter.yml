@@ -67,6 +67,14 @@ jobs:
             echo 'Windows publication is blocked: Authenticode credentials are required.' >&2
             exit 1
           }
+      - name: Block publication without signed release descriptor
+        env:
+          RELEASE_DESCRIPTOR_PRIVATE_KEY: ${{ secrets.RELEASE_DESCRIPTOR_PRIVATE_KEY }}
+        run: |
+          test -n "$RELEASE_DESCRIPTOR_PRIVATE_KEY" || {
+            echo 'Publication is blocked: a controlled release-descriptor signing key is required.' >&2
+            exit 1
+          }
 
   test:
     runs-on: ubuntu-latest
@@ -186,10 +194,11 @@ jobs:
         shell: pwsh
         env:
           CMAKE_GENERATOR: Visual Studio 17 2022
+          WINDOWS_AUTHENTICODE_SHA256: ${{ vars.WINDOWS_AUTHENTICODE_SHA256 }}
         run: |
           $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
           $appVersion, $appBuild = $version -split '\+', 2
-          flutter build windows --release "--dart-define=APP_VERSION=$appVersion" "--dart-define=APP_BUILD=$appBuild"
+          flutter build windows --release "--dart-define=APP_VERSION=$appVersion" "--dart-define=APP_BUILD=$appBuild" "--dart-define=WINDOWS_AUTHENTICODE_SHA256=$env:WINDOWS_AUTHENTICODE_SHA256"
 
       - name: Write build provenance
         shell: pwsh
@@ -332,6 +341,20 @@ jobs:
             exit 1
           }
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName'
+          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          release_body=$(jq -r '.body // ""' <<<"$release_json")
+          grep -Eq '"algorithm"[[:space:]]*:[[:space:]]*"ed25519"' <<<"$release_body" || {
+            echo 'Release body is missing the Ed25519 descriptor signature.' >&2
+            exit 1
+          }
+          grep -Eq '"publicKeyId"[[:space:]]*:[[:space:]]*"thing-release-2026"' <<<"$release_body" || {
+            echo 'Release body is missing the pinned descriptor key id.' >&2
+            exit 1
+          }
+          grep -Fq '"signatures"' <<<"$release_body" || {
+            echo 'Release body is missing per-asset signatures.' >&2
+            exit 1
+          }
           ref_json=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")
           ref_type=$(jq -r '.object.type' <<<"$ref_json")
           ref_sha=$(jq -r '.object.sha' <<<"$ref_json")
@@ -365,6 +388,12 @@ jobs:
             echo 'Provenance must list exactly the two uploaded assets' >&2
             exit 1
           }
+          while IFS= read -r asset; do
+            grep -Fq "\"$asset\"" <<<"$release_body" || {
+              echo "Release descriptor is missing asset signature: $asset" >&2
+              exit 1
+            }
+          done < <(jq -r '.assets[].path' "$provenance")
 
       - name: Block unsigned Windows release
         env:
