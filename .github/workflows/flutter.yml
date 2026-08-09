@@ -11,11 +11,63 @@ on:
         description: Existing GitHub Release tag to receive Windows assets
         required: true
         type: string
+      publish_android:
+        description: Publish Android (requires release keystore secrets)
+        required: false
+        default: false
+        type: boolean
+      publish_macos:
+        description: Publish macOS (requires Developer ID and notarization secrets)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+env:
+  FLUTTER_VERSION: 3.35.7
+  DMGBUILD_VERSION: 1.6.5
+
 jobs:
+  release-gates:
+    name: Release credential gates
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Block Android publication without formal signing
+        if: inputs.publish_android
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE" -a -n "$STORE_PASSWORD" -a -n "$ALIAS" -a -n "$KEY_PASSWORD" || {
+            echo 'Android publication is blocked: configure a formal release keystore first.' >&2
+            exit 1
+          }
+      - name: Block macOS publication without notarization
+        if: inputs.publish_macos
+        env:
+          IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+        run: |
+          test -n "$IDENTITY" -a -n "$NOTARY_PROFILE" || {
+            echo 'macOS publication is blocked: Developer ID and notarization credentials are required.' >&2
+            exit 1
+          }
+      - name: Block Windows publication without Authenticode
+        env:
+          CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          test -n "$CERTIFICATE" -a -n "$PASSWORD" || {
+            echo 'Windows publication is blocked: Authenticode credentials are required.' >&2
+            exit 1
+          }
+
   test:
     runs-on: ubuntu-latest
     defaults:
@@ -30,6 +82,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
@@ -43,6 +96,67 @@ jobs:
 
       - name: Test
         run: flutter test
+
+  android-release:
+    name: Android signed release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_android
+    needs: [test, release-gates]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - name: Decode formal release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore
+      - name: Build signed APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/flutter/android/app/release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: flutter build apk --release
+      - name: Reject debug signing
+        run: |
+          apksigner verify --verbose build/app/outputs/flutter-apk/app-release.apk
+          apksigner verify --print-certs build/app/outputs/flutter-apk/app-release.apk | grep -qv 'CN=Android Debug' || {
+            echo 'Android release is debug-signed' >&2
+            exit 1
+          }
+
+  macos-release:
+    name: macOS signed and notarized release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_macos
+    needs: [test, release-gates]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+        working-directory: flutter
+      - run: python3 -m pip install "dmgbuild==${DMGBUILD_VERSION}"
+      - name: Build, sign, notarize, staple, and validate DMG
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+          DMGBUILD_VERSION: ${{ env.DMGBUILD_VERSION }}
+        run: scripts/package-macos-dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Thing-macos-${{ github.sha }}
+          path: flutter/build/Thing-macOS-v*.dmg
 
   windows:
     name: Windows build
@@ -60,6 +174,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: false
 
       - name: Install dependencies
@@ -71,6 +186,14 @@ jobs:
           $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
           $appVersion, $appBuild = $version -split '\+', 2
           flutter build windows --release "--dart-define=APP_VERSION=$appVersion" "--dart-define=APP_BUILD=$appBuild"
+
+      - name: Write build provenance
+        shell: pwsh
+        run: |
+          $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
+          if ('${{ inputs.release_tag }}' -and '${{ inputs.release_tag }}' -ne "v$($version.Split('+')[0])") {
+            throw "Release tag must equal pubspec version: expected v$($version.Split('+')[0])"
+          }
 
       - name: Validate Windows release output
         shell: pwsh
@@ -110,17 +233,50 @@ jobs:
           }
           if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler was not found.' }
           $releaseTag = $env:RELEASE_TAG
-          if ($releaseTag) {
-            $version = $releaseTag -replace '^v', ''
-          } else {
-            $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+' ).Matches.Groups[1].Value
-          }
+          $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim().Split('+')[0]
+          if ($releaseTag -and $releaseTag -ne "v$version") { throw "Release tag must equal pubspec version: expected v$version" }
           & $iscc "/DAppVersion=$version" windows/installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $installerPath = Join-Path $PWD "build/installer/Thing-windows-v$version-setup.exe"
           if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
             throw "Windows installer was not created with the expected name: $installerPath"
           }
+
+      - name: Sign Windows installer for publication
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_SIGNING_CERTIFICATE -or -not $env:WINDOWS_SIGNING_PASSWORD) {
+            throw 'Windows Authenticode credentials are required before publishing assets.'
+          }
+          $pfx = Join-Path $PWD 'build/signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE))
+          $installer = Get-Item 'build/installer/Thing-windows-*-setup.exe'
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Select-Object -First 1).FullName
+          if (-not $signtool) { throw 'signtool.exe was not found.' }
+          & $signtool sign /fd SHA256 /f $pfx /p $env:WINDOWS_SIGNING_PASSWORD /tr http://timestamp.digicert.com /td SHA256 $installer.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item -Force $pfx
+
+      - name: Write and hash release provenance
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
+          $files = @(
+            "build/Thing-windows-${{ github.sha }}.zip",
+            (Get-ChildItem build/installer/Thing-windows-*-setup.exe).FullName
+          )
+          $assets = @($files | ForEach-Object {
+            $item = Get-Item $_
+            $path = if ($item.Directory.Name -eq 'installer') { "installer/$($item.Name)" } else { $item.Name }
+            @{ path = $path; bytes = $item.Length; sha256 = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower() }
+          })
+          @{ repository = $env:GITHUB_REPOSITORY; commit = $env:GITHUB_SHA; canonical_main = $env:GITHUB_SHA; version = $version; release_tag = "${{ inputs.release_tag }}"; assets = $assets } |
+            ConvertTo-Json -Depth 5 -Compress | Set-Content build/release-provenance.json
 
       - name: Upload Windows release artifact
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
@@ -130,6 +286,7 @@ jobs:
           path: |
             flutter/build/Thing-windows-${{ github.sha }}.zip
             flutter/build/installer/Thing-windows-*-setup.exe
+            flutter/build/release-provenance.json
 
   windows-release:
     name: Upload Windows release
@@ -153,6 +310,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          provenance=$(find release -name release-provenance.json -type f -print -quit)
+          [[ -n "$provenance" ]] || { echo 'Missing build provenance manifest' >&2; exit 1; }
+          [[ "$(jq -r .commit "$provenance")" == "$GITHUB_SHA" ]] || {
+            echo 'Build provenance commit does not match the release commit' >&2
+            exit 1
+          }
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
             echo "Release tag must look like v1.2.3: $RELEASE_TAG" >&2
             exit 1
@@ -166,6 +329,39 @@ jobs:
           fi
           [[ "$ref_sha" == "$GITHUB_SHA" ]] || {
             echo "Release tag $RELEASE_TAG points to $ref_sha, expected $GITHUB_SHA" >&2
+            exit 1
+          }
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
+          [[ "$main_sha" == "$GITHUB_SHA" ]] || {
+            echo "Release commit is not canonical main: main=$main_sha build=$GITHUB_SHA" >&2
+            exit 1
+          }
+          target=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.target_commitish')
+          [[ "$target" == "main" || "$target" == "$GITHUB_SHA" ]] || {
+            echo "Release target_commitish is not canonical main: $target" >&2
+            exit 1
+          }
+          version=$(jq -r .version "$provenance")
+          [[ "$version" == "${RELEASE_TAG#v}+"* ]] || {
+            echo "Provenance version does not match release tag: $version vs $RELEASE_TAG" >&2
+            exit 1
+          }
+          [[ "$(jq -r .release_tag "$provenance")" == "$RELEASE_TAG" ]] || {
+            echo 'Provenance release tag does not match target release' >&2
+            exit 1
+          }
+          jq -e '.assets | length == 2' "$provenance" >/dev/null || {
+            echo 'Provenance must list exactly the two uploaded assets' >&2
+            exit 1
+          }
+
+      - name: Block unsigned Windows release
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          test -n "$WINDOWS_SIGNING_CERTIFICATE" -a -n "$WINDOWS_SIGNING_PASSWORD" || {
+            echo 'Windows Authenticode credentials are required before publishing assets.' >&2
             exit 1
           }
 
@@ -225,6 +421,13 @@ jobs:
             echo "Windows installer to upload is missing: release/$installer_name" >&2
             exit 1
           }
+          while IFS=$'\t' read -r asset expected; do
+            actual=$(sha256sum "release/$asset" | cut -d' ' -f1)
+            [[ "$actual" == "$expected" ]] || {
+              echo "Asset SHA-256 mismatch for $asset" >&2
+              exit 1
+            }
+          done < <(jq -r '.assets[] | [.path, .sha256] | @tsv' release/release-provenance.json)
           [[ "$installer_name" =~ ^Thing-windows-v[0-9]+\.[0-9]+\.[0-9]+-setup\.exe$ ]] || {
             echo "Windows installer to upload has an unexpected name: $installer_name" >&2
             exit 1
@@ -234,11 +437,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" "release/Thing-windows-$RELEASE_TAG.zip" --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$RELEASE_TAG" "release/Thing-windows-$RELEASE_TAG.zip" --repo "$GITHUB_REPOSITORY"
 
       - name: Upload Windows installer to Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           INSTALLER_NAME: ${{ steps.prepare-release-assets.outputs.installer_name }}
-        run: gh release upload "$RELEASE_TAG" "release/$INSTALLER_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release upload "$RELEASE_TAG" "release/$INSTALLER_NAME" --repo "$GITHUB_REPOSITORY"
