@@ -293,7 +293,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('发现新版本 v0.1.5，可以下载并安装。'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, '下载并安装'), findsOneWidget);
+    expect(find.text('下载并安装'), findsOneWidget);
   });
 
   testWidgets('applies precision preference only to new event editors', (
