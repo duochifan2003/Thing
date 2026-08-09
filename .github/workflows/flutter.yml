@@ -28,6 +28,7 @@ permissions:
 env:
   FLUTTER_VERSION: 3.44.8
   DMGBUILD_VERSION: 1.6.5
+  WINDOWS_AUTHENTICODE_SHA256: ${{ vars.WINDOWS_AUTHENTICODE_SHA256 }}
 
 jobs:
   release-gates:
@@ -194,7 +195,6 @@ jobs:
         shell: pwsh
         env:
           CMAKE_GENERATOR: Visual Studio 17 2022
-          WINDOWS_AUTHENTICODE_SHA256: ${{ vars.WINDOWS_AUTHENTICODE_SHA256 }}
         run: |
           $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
           $appVersion, $appBuild = $version -split '\+', 2
@@ -261,8 +261,6 @@ jobs:
         env:
           WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
           WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
-          WINDOWS_AUTHENTICODE_SHA256: ${{ vars.WINDOWS_AUTHENTICODE_SHA256 }}
-          WINDOWS_AUTHENTICODE_SHA256: ${{ secrets.WINDOWS_AUTHENTICODE_SHA256 }}
         run: |
           if (-not $env:WINDOWS_SIGNING_CERTIFICATE -or -not $env:WINDOWS_SIGNING_PASSWORD) {
             throw 'Windows Authenticode credentials are required before publishing assets.'
@@ -270,19 +268,14 @@ jobs:
           $pfx = Join-Path $PWD 'build/signing.pfx'
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE))
           $cert = Get-PfxCertificate -FilePath $pfx
-          $certThumbprint = $cert.Thumbprint.ToLower()
           if (-not $env:WINDOWS_AUTHENTICODE_SHA256) { throw 'WINDOWS_AUTHENTICODE_SHA256 is required before publishing assets.' }
-          $expectedThumbprint = $env:WINDOWS_AUTHENTICODE_SHA256.Replace(':', '').Trim().ToLower()
-          if ($certThumbprint -ne $expectedThumbprint) {
-            throw "Certificate thumbprint ($certThumbprint) does not match configured WINDOWS_AUTHENTICODE_SHA256 ($expectedThumbprint)"
+          $expectedSha256 = $env:WINDOWS_AUTHENTICODE_SHA256.Replace(':', '').Trim().ToLowerInvariant()
+          if ($expectedSha256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'WINDOWS_AUTHENTICODE_SHA256 must be a SHA-256 certificate fingerprint.'
           }
-          $cert = Get-PfxCertificate -FilePath $pfx
-          $certThumbprint = $cert.Thumbprint.ToLower()
-          if ($env:WINDOWS_AUTHENTICODE_SHA256) {
-            $expectedThumbprint = $env:WINDOWS_AUTHENTICODE_SHA256.Replace(':', '').Trim().ToLower()
-            if ($certThumbprint -ne $expectedThumbprint) {
-              throw "Certificate thumbprint ($certThumbprint) does not match configured WINDOWS_AUTHENTICODE_SHA256 ($expectedThumbprint)"
-            }
+          $certSha256 = $cert.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256).ToLowerInvariant()
+          if ($certSha256 -ne $expectedSha256) {
+            throw "Certificate SHA-256 fingerprint ($certSha256) does not match configured WINDOWS_AUTHENTICODE_SHA256 ($expectedSha256)"
           }
           $installer = Get-Item 'build/installer/Thing-windows-*-setup.exe'
           $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Select-Object -First 1).FullName
@@ -358,20 +351,6 @@ jobs:
             exit 1
           }
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName'
-          release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
-          release_body=$(jq -r '.body // ""' <<<"$release_json")
-          grep -Eq '"algorithm"[[:space:]]*:[[:space:]]*"ed25519"' <<<"$release_body" || {
-            echo 'Release body is missing the Ed25519 descriptor signature.' >&2
-            exit 1
-          }
-          grep -Eq '"publicKeyId"[[:space:]]*:[[:space:]]*"thing-release-2026"' <<<"$release_body" || {
-            echo 'Release body is missing the pinned descriptor key id.' >&2
-            exit 1
-          }
-          grep -Fq '"signatures"' <<<"$release_body" || {
-            echo 'Release body is missing per-asset signatures.' >&2
-            exit 1
-          }
           ref_json=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")
           ref_type=$(jq -r '.object.type' <<<"$ref_json")
           ref_sha=$(jq -r '.object.sha' <<<"$ref_json")
@@ -405,12 +384,6 @@ jobs:
             echo 'Provenance must list exactly the two uploaded assets' >&2
             exit 1
           }
-          while IFS= read -r asset; do
-            grep -Fq "\"$asset\"" <<<"$release_body" || {
-              echo "Release descriptor is missing asset signature: $asset" >&2
-              exit 1
-            }
-          done < <(jq -r '.assets[].path' "$provenance")
 
       - name: Block unsigned Windows release
         env:
@@ -492,6 +465,73 @@ jobs:
             exit 1
           }
 
+      - name: Generate and sign release descriptor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DESCRIPTOR_PRIVATE_KEY: ${{ secrets.RELEASE_DESCRIPTOR_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_DESCRIPTOR_PRIVATE_KEY" || {
+            echo 'Release descriptor signing key is required.' >&2
+            exit 1
+          }
+          key_file=$(mktemp)
+          public_key_file=$(mktemp)
+          signature_file=$(mktemp)
+          descriptor_file=release/release-descriptor.json
+          trap 'rm -f "$key_file" "$public_key_file" "$signature_file" release/release-descriptor.unsigned.json' EXIT
+          printf '%s\n' "$RELEASE_DESCRIPTOR_PRIVATE_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          openssl pkey -in "$key_file" -pubout -out "$public_key_file" >/dev/null 2>&1
+
+          jq -c '{schemaVersion: 1, repository, commit, canonical_main, version, release_tag, assets: (.assets | map(. + {signature: null})), signatures: {}}' \
+            release/release-provenance.json > release/release-descriptor.unsigned.json
+          while IFS=$'\t' read -r asset expected; do
+            asset_path="release/$asset"
+            openssl pkeyutl -sign -rawin -inkey "$key_file" -in "$asset_path" -out "$signature_file"
+            signature=$(base64 -w0 "$signature_file")
+            jq --arg asset "$asset" --arg signature "$signature" \
+              '.signatures[$asset] = {algorithm: "ed25519", publicKeyId: "thing-release-2026", value: $signature} |
+               .assets |= map(if .path == $asset then .signature = .signatures[$asset] else . end)' \
+              release/release-descriptor.unsigned.json > "$descriptor_file.tmp"
+            mv "$descriptor_file.tmp" release/release-descriptor.unsigned.json
+          done < <(jq -r '.assets[] | [.path, .sha256] | @tsv' release/release-provenance.json)
+
+          openssl pkeyutl -sign -rawin -inkey "$key_file" \
+            -in release/release-descriptor.unsigned.json -out "$signature_file"
+          descriptor_signature=$(base64 -w0 "$signature_file")
+          jq --arg signature "$descriptor_signature" \
+            '. + {signature: {algorithm: "ed25519", publicKeyId: "thing-release-2026", value: $signature}}' \
+            release/release-descriptor.unsigned.json > "$descriptor_file"
+          jq -e '.signature.algorithm == "ed25519" and .signature.publicKeyId == "thing-release-2026" and ((.signatures | length) == (.assets | length))' \
+            "$descriptor_file" >/dev/null
+
+          jq -c '.signature as $signature | del(.signature)' "$descriptor_file" > release/release-descriptor.verify.json
+          printf '%s' "$descriptor_signature" | base64 -d > "$signature_file"
+          openssl pkeyutl -verify -rawin -pubin -inkey "$public_key_file" \
+            -in release/release-descriptor.verify.json -sigfile "$signature_file" >/dev/null
+
+          notes_file=$(mktemp)
+          trap 'rm -f "$key_file" "$public_key_file" "$signature_file" "$notes_file" release/release-descriptor.unsigned.json release/release-descriptor.verify.json' EXIT
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""' > "$notes_file"
+          {
+            printf '\n\n```json\n'
+            cat "$descriptor_file"
+            printf '\n```\n'
+          } >> "$notes_file"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes_file"
+
+          release_body=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""')
+          grep -Fq '"publicKeyId":"thing-release-2026"' <<< "$release_body"
+          while IFS= read -r asset; do
+            grep -Fq "\"$asset\"" <<< "$release_body" || {
+              echo "Release descriptor is missing asset signature: $asset" >&2
+              exit 1
+            }
+          done < <(jq -r '.assets[].path' "$descriptor_file")
+
       - name: Upload Windows package to Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -504,3 +544,9 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           INSTALLER_NAME: ${{ steps.prepare-release-assets.outputs.installer_name }}
         run: gh release upload "$RELEASE_TAG" "release/$INSTALLER_NAME" --repo "$GITHUB_REPOSITORY"
+
+      - name: Upload signed release descriptor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" release/release-descriptor.json --repo "$GITHUB_REPOSITORY"
