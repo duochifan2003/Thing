@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+: "${MACOS_SIGNING_IDENTITY:?MACOS_SIGNING_IDENTITY is required for a release}"
+: "${MACOS_NOTARY_PROFILE:?MACOS_NOTARY_PROFILE is required for notarization}"
+
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 flutter_dir="$repo_root/flutter"
 version=$(sed -n 's/^version: //p' "$flutter_dir/pubspec.yaml" | head -n 1)
@@ -23,9 +26,13 @@ swift "$repo_root/scripts/create-macos-dmg-background.swift" \
   "$stage/installation-guide.png"
 
 if ! python3 -c 'import dmgbuild' >/dev/null 2>&1; then
-  echo "Missing dmgbuild. Install it with: python3 -m pip install --user dmgbuild" >&2
+  echo "Missing pinned dmgbuild ${DMGBUILD_VERSION:-1.6.5}. Install the release requirements first." >&2
   exit 1
 fi
+python3 -c 'import importlib.metadata as m, os, sys; expected=os.environ.get("DMGBUILD_VERSION", "1.6.5"); actual=m.version("dmgbuild"); sys.exit(0 if actual == expected else 1)' || {
+  echo "dmgbuild version does not match ${DMGBUILD_VERSION:-1.6.5}" >&2
+  exit 1
+}
 
 python3 - "$output" \
   "$flutter_dir/build/macos/Build/Products/Release/Thing.app" \
@@ -61,3 +68,11 @@ build_dmg(
     },
 )
 PY
+
+app="$flutter_dir/build/macos/Build/Products/Release/Thing.app"
+codesign --verify --deep --strict --verbose=2 "$app"
+spctl --assess --type execute --verbose=4 "$app"
+xcrun notarytool submit "$output" --keychain-profile "$MACOS_NOTARY_PROFILE" --wait
+xcrun stapler staple "$output"
+xcrun stapler validate "$output"
+spctl --assess --type open --context context:primary-signature "$output"

@@ -24,11 +24,28 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            val keystore = System.getenv("ANDROID_KEYSTORE_PATH")
+            storeFile = keystore?.let(::file)
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+            keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            val signingInputs = listOf(
+                System.getenv("ANDROID_KEYSTORE_PATH"),
+                System.getenv("ANDROID_KEYSTORE_PASSWORD"),
+                System.getenv("ANDROID_KEY_ALIAS"),
+                System.getenv("ANDROID_KEY_PASSWORD"),
+            )
+            if (signingInputs.any { it.isNullOrBlank() }) {
+                throw GradleException("Android release is blocked: formal keystore credentials are required; debug signing is forbidden")
+            }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
