@@ -132,7 +132,13 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: flutter build apk --release
+        run: |
+          version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
+          app_version=${version%%+*}
+          app_build=${version#*+}
+          flutter build apk --release \
+            --dart-define=APP_VERSION="$app_version" \
+            --dart-define=APP_BUILD="$app_build"
       - name: Reject debug signing
         run: |
           apksigner verify --verbose build/app/outputs/flutter-apk/app-release.apk
@@ -202,9 +208,11 @@ jobs:
 
       - name: Write build provenance
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
-          if ('${{ inputs.release_tag }}' -and '${{ inputs.release_tag }}' -ne "v$($version.Split('+')[0])") {
+          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -ne "v$($version.Split('+')[0])") {
             throw "Release tag must equal pubspec version: expected v$($version.Split('+')[0])"
           }
 
@@ -289,10 +297,12 @@ jobs:
       - name: Write and hash release provenance
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $version = (Get-Content pubspec.yaml | Select-String '^version:').Line.Split(':', 2)[1].Trim()
           $sourceZipName = "Thing-windows-${{ github.sha }}.zip"
-          $releaseTag = "${{ inputs.release_tag }}"
+          $releaseTag = $env:RELEASE_TAG
           $releaseZipName = if ($releaseTag) { "Thing-windows-$releaseTag.zip" } else { $sourceZipName }
           $zipPath = "build/$sourceZipName"
           $installer = Get-ChildItem build/installer/Thing-windows-*-setup.exe | Select-Object -First 1
