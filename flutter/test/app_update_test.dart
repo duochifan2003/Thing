@@ -569,6 +569,14 @@ SHA256(Thing-linux.zip) = dddddddddddddddddddddddddddddddddddddddddddddddddddddd
       );
     });
   });
+
+  group('version constants', () {
+    test('fallback constants match expected release version', () {
+      expect(appVersion, '0.1.22');
+      expect(appBuild, '45');
+      expect(appVersionLabel, 'v0.1.22+45');
+    });
+  });
 }
 
 Map<String, dynamic> _releaseJson({
