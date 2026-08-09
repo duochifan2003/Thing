@@ -81,6 +81,11 @@ jobs:
           version=$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)
           app_version=${version%%+*}
           app_build=${version#*+}
+          sed -i.bak \
+            -e 's/CODE_SIGN_IDENTITY = "Apple Development";/CODE_SIGN_IDENTITY = "-";/g' \
+            -e 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' \
+            -e '/DEVELOPMENT_TEAM = /d' \
+            macos/Runner.xcodeproj/project.pbxproj
           flutter build macos --release \
             --dart-define=APP_VERSION="$app_version" \
             --dart-define=APP_BUILD="$app_build"
