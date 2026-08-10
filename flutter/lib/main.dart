@@ -336,7 +336,7 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
         secondary: companion,
         onSecondary: onCompanion,
         secondaryContainer: surfaceHighest,
-        onSecondaryContainer: onPrimary,
+        onSecondaryContainer: onSurface,
         tertiary: companion,
         onTertiary: onCompanion,
         error: error,
@@ -454,6 +454,25 @@ ThemeData _atlasTheme(AppPrimaryColor primaryColor, Brightness brightness) {
         side: BorderSide(color: scheme.outline),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+      ),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(
+        foregroundColor: WidgetStateProperty.resolveWith<Color?>((states) {
+          if (states.contains(WidgetState.selected)) {
+            return onSurface;
+          }
+          return onSurface.withAlpha(190);
+        }),
+        backgroundColor: WidgetStateProperty.resolveWith<Color?>((states) {
+          if (states.contains(WidgetState.selected)) {
+            return surfaceHighest;
+          }
+          return surfaceLow;
+        }),
+        side: WidgetStatePropertyAll<BorderSide>(
+          BorderSide(color: scheme.outline),
         ),
       ),
     ),
