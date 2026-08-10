@@ -72,7 +72,7 @@ class AppUpdateRelease {
     if (candidates.isEmpty) return null;
     if (operatingSystem == 'macos') {
       return candidates.firstWhere(
-        (asset) => asset.name.toLowerCase().endsWith('.dmg'),
+        (asset) => asset.name.toLowerCase().endsWith('.zip'),
         orElse: () => candidates.first,
       );
     }

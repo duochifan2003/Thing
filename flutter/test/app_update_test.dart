@@ -122,12 +122,12 @@ void main() {
       expect(isNewerAppVersion('1.1.99', '1.2.0'), isFalse);
     });
 
-    test('prefers a macOS DMG when both macOS package types exist', () {
+    test('prefers a macOS ZIP package when both macOS package types exist', () {
       final release = AppUpdateRelease.fromJson(_releaseJson(macAssets: true));
 
       final asset = release.assetFor('macos');
-      expect(asset?.name, 'Thing-macOS-v0.1.19.dmg');
-      expect(asset?.size, 26523070);
+      expect(asset?.name, 'Thing-macOS-v0.1.19.zip');
+      expect(asset?.size, 15440124);
       expect(release.assetFor('android'), isNull);
     });
 
