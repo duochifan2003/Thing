@@ -483,6 +483,7 @@ bool _isUnsupportedDiskutil(io.ProcessResult result) {
       details.contains('unknown option') ||
       details.contains('unrecognized option') ||
       details.contains('invalid command') ||
+      details.contains('did not recognize verb "image"') ||
       details.contains('usage: diskutil image');
 }
 

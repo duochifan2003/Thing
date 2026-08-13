@@ -86,7 +86,12 @@ void _addMacOSDmgMountTests() {
           runProcess: (executable, arguments) async {
             commands.add('$executable ${arguments.join(' ')}');
             if (executable == '/usr/sbin/diskutil') {
-              return io.ProcessResult(1, 1, '', 'Unknown command image');
+              return io.ProcessResult(
+                1,
+                1,
+                '',
+                'DiD NoT ReCoGnIzE VeRb "ImAgE"',
+              );
             }
             return io.ProcessResult(
               1,
