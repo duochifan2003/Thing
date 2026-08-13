@@ -1,7 +1,14 @@
+// ignore_for_file: implementation_imports
+
 import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:desktop_updater/desktop_updater.dart';
+import 'package:desktop_updater/src/core/macos_distribution_artifacts.dart'
+    show MacOSDistributionVerifier, MountedDmg;
+import 'package:desktop_updater/src/core/update_client.dart' show UpdateClient;
+import 'package:desktop_updater/src/macos_update.dart'
+    show defaultProcessRunner;
 
 const appVersion = String.fromEnvironment(
   'APP_VERSION',
@@ -126,6 +133,111 @@ class AppUpdateRelease {
   }
 }
 
+/// Uses the current macOS image command and retains a narrow old-system fallback.
+class MacOSDmgMountAdapter extends MacOSDistributionVerifier {
+  MacOSDmgMountAdapter({super.runProcess = defaultProcessRunner});
+
+  @override
+  Future<MountedDmg> mountDmgReadOnly({required io.File dmg}) async {
+    const diskutil = '/usr/sbin/diskutil';
+    final arguments = [
+      'image',
+      'attach',
+      '--readOnly',
+      '--mountOptions',
+      'nobrowse',
+      dmg.path,
+    ];
+    io.ProcessResult result;
+    try {
+      result = await runProcess(diskutil, arguments);
+    } on io.ProcessException catch (error) {
+      return _attachWithHdiutil(dmg, 'diskutil 不可用：$error');
+    } on Object catch (error) {
+      throw AppUpdateException('更新包挂载失败：$error');
+    }
+
+    if (result.exitCode == 0) return _mountedDmg(dmg, result.stdout.toString());
+    if (_isUnsupportedDiskutil(result)) {
+      return _attachWithHdiutil(dmg, _processDetails(result));
+    }
+    throw AppUpdateException(
+      '更新包挂载失败：diskutil image attach 失败：${_processDetails(result)}',
+    );
+  }
+
+  @override
+  Future<void> detachDmg(MountedDmg mounted) async {
+    io.ProcessResult result;
+    try {
+      result = await runProcess('/usr/sbin/diskutil', [
+        'eject',
+        mounted.mountPoint,
+      ]);
+    } on Object catch (error) {
+      throw AppUpdateException('更新包卸载失败：$error');
+    }
+    if (result.exitCode != 0) {
+      throw AppUpdateException('更新包卸载失败：${_processDetails(result)}');
+    }
+  }
+
+  Future<MountedDmg> _attachWithHdiutil(io.File dmg, String reason) async {
+    io.ProcessResult result;
+    try {
+      result = await runProcess('/usr/bin/hdiutil', [
+        'attach',
+        '-readonly',
+        '-nobrowse',
+        dmg.path,
+      ]);
+    } on Object catch (error) {
+      throw AppUpdateException('更新包挂载失败：diskutil 不可用（$reason），兼容回退也失败：$error');
+    }
+    if (result.exitCode != 0) {
+      throw AppUpdateException(
+        '更新包挂载失败：diskutil 不可用（$reason），兼容回退失败：${_processDetails(result)}',
+      );
+    }
+    return _mountedDmg(dmg, result.stdout.toString());
+  }
+
+  MountedDmg _mountedDmg(io.File dmg, String output) {
+    final mountPoint = _mountPointFromOutput(output);
+    if (mountPoint == null) {
+      throw const AppUpdateException('更新包挂载失败：macOS 未返回挂载目录。');
+    }
+    return MountedDmg(imagePath: dmg.path, mountPoint: mountPoint);
+  }
+}
+
+class _ThingDesktopUpdater extends DesktopUpdater {
+  @override
+  Future<UpdateStageResult> downloadZipFirstUpdate({
+    required Uri appArchiveUrl,
+    required DesktopVersionInfo currentVersion,
+    required ReleaseDescriptor descriptor,
+    void Function(int receivedBytes, int? totalBytes)? onProgress,
+    UpdateRequestHeadersProvider? requestHeadersProvider,
+  }) {
+    if (descriptor.platform != 'macos') {
+      return super.downloadZipFirstUpdate(
+        appArchiveUrl: appArchiveUrl,
+        currentVersion: currentVersion,
+        descriptor: descriptor,
+        onProgress: onProgress,
+        requestHeadersProvider: requestHeadersProvider,
+      );
+    }
+    return UpdateClient(
+      appArchiveUrl: appArchiveUrl,
+      currentVersion: currentVersion,
+      requestHeadersProvider: requestHeadersProvider,
+      macosDistributionVerifier: MacOSDmgMountAdapter(),
+    ).downloadVerifyAndStage(descriptor: descriptor, onProgress: onProgress);
+  }
+}
+
 String _findSha256(Map rawAsset, String assetName, String body) {
   final digest = rawAsset['digest'];
   if (digest is String && digest.startsWith('sha256:')) {
@@ -165,7 +277,7 @@ class AppUpdateService {
   }) : operatingSystem = operatingSystem ?? io.Platform.operatingSystem,
        _fetchJson = fetchJson,
        _exitApp = exitApp ?? io.exit,
-       _desktopUpdater = desktopUpdater ?? DesktopUpdater();
+       _desktopUpdater = desktopUpdater ?? _ThingDesktopUpdater();
 
   final String currentVersion;
   final String operatingSystem;
@@ -228,8 +340,9 @@ class AppUpdateService {
       generatedAt: DateTime.now().toUtc(),
     )..validate();
 
+    late final UpdateStageResult staged;
     try {
-      final staged = await _desktopUpdater.downloadZipFirstUpdate(
+      staged = await _desktopUpdater.downloadZipFirstUpdate(
         appArchiveUrl: Uri.parse(_latestReleaseUri),
         currentVersion: DesktopVersionInfo.parse(currentVersion),
         descriptor: descriptor,
@@ -238,6 +351,24 @@ class AppUpdateService {
         },
       );
       onProgress?.call(1);
+    } on AppUpdateException {
+      rethrow;
+    } on io.FileSystemException catch (error) {
+      final detail = error.message;
+      if (detail.contains('Artifact length mismatch') ||
+          detail.contains('Artifact SHA-256 mismatch')) {
+        throw AppUpdateException('更新校验失败：$detail');
+      }
+      throw AppUpdateException('更新下载失败：$detail');
+    } on io.SocketException catch (error) {
+      throw AppUpdateException('更新下载失败：$error');
+    } on io.HttpException catch (error) {
+      throw AppUpdateException('更新下载失败：$error');
+    } on Object catch (error) {
+      throw AppUpdateException('更新下载失败：$error');
+    }
+
+    try {
       await _desktopUpdater.installUpdate(
         stagingPath: staged.stagingPath,
         allowUnsignedMacOSUpdates: true,
@@ -344,6 +475,31 @@ List<int> _versionParts(String value) {
 
 bool isNewerAppVersion(String candidate, String current) =>
     _isNewerVersion(candidate, current);
+
+bool _isUnsupportedDiskutil(io.ProcessResult result) {
+  final details = _processDetails(result).toLowerCase();
+  return details.contains('unknown command') ||
+      details.contains('unknown verb') ||
+      details.contains('unknown option') ||
+      details.contains('unrecognized option') ||
+      details.contains('invalid command') ||
+      details.contains('did not recognize verb "image"') ||
+      details.contains('usage: diskutil image');
+}
+
+String _processDetails(io.ProcessResult result) {
+  final stdout = result.stdout.toString().trim();
+  final stderr = result.stderr.toString().trim();
+  return [stdout, stderr].where((value) => value.isNotEmpty).join('\n');
+}
+
+String? _mountPointFromOutput(String output) {
+  for (final line in output.split('\n').reversed) {
+    final match = RegExp(r'(/Volumes/[^\r\n]+)').firstMatch(line);
+    if (match != null) return match.group(1)!.trim();
+  }
+  return null;
+}
 
 bool _isAllowedGitHubUri(Uri uri) =>
     uri.scheme == 'https' &&
