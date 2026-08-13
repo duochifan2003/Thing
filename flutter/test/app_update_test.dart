@@ -47,7 +47,92 @@ class FakeDesktopUpdater extends DesktopUpdater {
   }
 }
 
+void _addMacOSDmgMountTests() {
+  group('MacOSDmgMountAdapter', () {
+    test('uses diskutil image attach and eject', () async {
+      final commands = <String>[];
+      final adapter = MacOSDmgMountAdapter(
+        runProcess: (executable, arguments) async {
+          commands.add('$executable ${arguments.join(' ')}');
+          return io.ProcessResult(
+            1,
+            0,
+            executable == '/usr/sbin/diskutil' && arguments[1] == 'attach'
+                ? '/dev/disk6\tApple_APFS\t/Volumes/Thing Installer\n'
+                : '',
+            '',
+          );
+        },
+      );
+
+      final mounted = await adapter.mountDmgReadOnly(
+        dmg: io.File('/tmp/Thing-update.dmg'),
+      );
+      await adapter.detachDmg(mounted);
+
+      expect(mounted.mountPoint, '/Volumes/Thing Installer');
+      expect(commands, [
+        '/usr/sbin/diskutil image attach --readOnly --mountOptions nobrowse '
+            '/tmp/Thing-update.dmg',
+        '/usr/sbin/diskutil eject /Volumes/Thing Installer',
+      ]);
+    });
+
+    test(
+      'falls back only when diskutil does not support image attach',
+      () async {
+        final commands = <String>[];
+        final adapter = MacOSDmgMountAdapter(
+          runProcess: (executable, arguments) async {
+            commands.add('$executable ${arguments.join(' ')}');
+            if (executable == '/usr/sbin/diskutil') {
+              return io.ProcessResult(1, 1, '', 'Unknown command image');
+            }
+            return io.ProcessResult(
+              1,
+              0,
+              '/dev/disk6\tApple_APFS\t/Volumes/Thing Installer\n',
+              '',
+            );
+          },
+        );
+
+        final mounted = await adapter.mountDmgReadOnly(
+          dmg: io.File('/tmp/Thing-update.dmg'),
+        );
+
+        expect(mounted.mountPoint, '/Volumes/Thing Installer');
+        expect(commands, [
+          '/usr/sbin/diskutil image attach --readOnly --mountOptions nobrowse '
+              '/tmp/Thing-update.dmg',
+          '/usr/bin/hdiutil attach -readonly -nobrowse /tmp/Thing-update.dmg',
+        ]);
+      },
+    );
+
+    test('reports a supported diskutil failure as a mount error', () async {
+      final adapter = MacOSDmgMountAdapter(
+        runProcess: (_, _) async =>
+            io.ProcessResult(1, 1, '', 'diskutil: device is busy'),
+      );
+
+      expect(
+        () => adapter.mountDmgReadOnly(dmg: io.File('/tmp/Thing-update.dmg')),
+        throwsA(
+          isA<AppUpdateException>().having(
+            (error) => error.message,
+            'message',
+            allOf(contains('更新包挂载失败'), contains('device is busy')),
+          ),
+        ),
+      );
+    });
+  });
+}
+
 void main() {
+  _addMacOSDmgMountTests();
+
   group('checkForUpdate', () {
     test(
       'reads the latest GitHub release and selects a Windows package',
@@ -534,7 +619,7 @@ SHA256(Thing-linux.zip) = dddddddddddddddddddddddddddddddddddddddddddddddddddddd
       },
     );
 
-    test('wraps desktopUpdater download error in AppUpdateException', () async {
+    test('classifies desktopUpdater download error separately', () async {
       final fakeUpdater = FakeDesktopUpdater(
         downloadError: const io.FileSystemException('Download interrupted'),
       );
@@ -563,7 +648,7 @@ SHA256(Thing-linux.zip) = dddddddddddddddddddddddddddddddddddddddddddddddddddddd
           isA<AppUpdateException>().having(
             (e) => e.message,
             'message',
-            contains('更新安装失败'),
+            contains('更新下载失败'),
           ),
         ),
       );
